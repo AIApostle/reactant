@@ -1697,6 +1697,8 @@
   border: 1px solid var(--public-line);
   border-radius: 9px;
   background: var(--public-white);
+  color: var(--public-ink);
+  box-shadow: 0 5px 14px rgb(32 50 41 / 5%);
 }
 
 .system-node > span {
@@ -1708,6 +1710,7 @@
 .system-node strong {
   min-width: 0;
   overflow: hidden;
+  color: var(--public-ink);
   font-size: 10px;
   font-weight: 620;
   text-overflow: ellipsis;
@@ -1743,8 +1746,10 @@
   padding: 15px 9px;
   border: 1px solid color-mix(in srgb, var(--public-accent) 38%, transparent);
   border-radius: 12px;
+  color: var(--public-ink);
   text-align: center;
-  background: var(--public-accent-soft);
+  background: #f0f7f1;
+  box-shadow: 0 8px 20px rgb(32 50 41 / 7%);
 }
 
 .systems-agent-mark {
@@ -1756,6 +1761,7 @@
 }
 
 .systems-agent > strong {
+  color: var(--public-ink);
   font-size: 14px;
 }
 

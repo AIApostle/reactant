@@ -41,7 +41,6 @@ export function LandingPage() {
           <a href="#platform" onClick={() => setMobileMenuOpen(false)}>Platform</a>
           <a href="#integrations" onClick={() => setMobileMenuOpen(false)}>Integrations</a>
           <a href="#solutions" onClick={() => setMobileMenuOpen(false)}>Solutions</a>
-          <a href="#developers" onClick={() => setMobileMenuOpen(false)}>Developers</a>
         </nav>
         <div className="public-nav-actions">
           <Link className="public-login-link" to="/login">Sign in</Link>
@@ -183,10 +182,6 @@ export function LandingPage() {
             <article><strong>Social commerce</strong><span>Keep product photos and details ready even without a dedicated storefront.</span></article>
             <article><strong>Growing brands</strong><span>Bring more customer channels and operating context together over time.</span></article>
           </div>
-          <div className="developer-note" id="developers">
-            <div><p className="public-eyebrow"><span className="eyebrow-line" /> Designed to extend</p><h3>One operating foundation, built to grow.</h3></div>
-            <p>Reactant's direction includes provider adapters, permission-aware agent tools, APIs, event workflows, and operational insights. Public developer capabilities and advanced analytics are not available yet.</p>
-          </div>
         </section>
 
         <section className="public-cta" id="get-started">
@@ -208,7 +203,7 @@ export function LandingPage() {
         </div>
         <div className="footer-link-group"><strong>Platform</strong><a href="#agent">Business Agent</a><a href="#integrations">Integrations</a><a href="#platform">Commerce & payments</a></div>
         <div className="footer-link-group"><strong>Solutions</strong><a href="#solutions">Retail</a><a href="#solutions">Social commerce</a><a href="#solutions">Customer support</a></div>
-        <div className="footer-link-group"><strong>Developers</strong><a href="#developers">Platform direction</a><a href="#developers">Integrations</a><a href="#get-started">Get started</a></div>
+        <div className="footer-link-group"><strong>Company</strong><a href="#platform">About Reactant</a><a href="#get-started">Get started</a></div>
         <div className="footer-bottom"><span>© {currentYear} Reactant</span><div><Link to="/login">Sign in</Link><Link to="/signup">Get started</Link></div></div>
       </footer>
     </div>

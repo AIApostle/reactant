@@ -1,13 +1,22 @@
 # React + TypeScript + Vite
 
-## Local backend integration
+## Hosted backend integration
 
-For the deployed frontend, set `VITE_API_BASE_URL` to
-`https://reactant.onrender.com/api/v1`. For local testing, use `.env.local`
-with `http://localhost:8000/api/v1`. In both cases, set the Supabase URL and
-public publishable/anon key for the same project configured in the backend.
-The current Supabase URL and publishable key are also safe production
-fallbacks in `src/supabase.ts`; environment variables override them when set.
+Production builds always use `https://reactant.onrender.com/api/v1`. Set these
+Vercel environment variables for Supabase:
+
+```dotenv
+VITE_API_BASE_URL=https://reactant.onrender.com/api/v1
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
+```
+
+The Supabase URL and public key must belong to the same project configured in
+the Render backend. The backend must include
+`https://reactant-theta.vercel.app` in `ALLOWED_WEB_ORIGINS`.
+
+For local development only, `.env.local` uses
+`http://localhost:8000/api/v1`.
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 

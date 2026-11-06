@@ -14,7 +14,7 @@ request/response behavior.
 
 ## 1. API boundary
 
-- **Base URL:** `https://api.<reactant-domain>/api/v1`
+- **Base URL:** `https://reactant.onrender.com/api/v1`
 - **JSON:** UTF-8 request and response bodies use `application/json`.
 - **Authentication:** Supabase Auth (or the selected identity provider) issues
   short-lived access tokens. Send them as `Authorization: Bearer <access_token>`.

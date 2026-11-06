@@ -35,27 +35,46 @@ Submitting credentials currently creates a `pending` integration only. It is
 not proof that the provider is connected. Do not enter production credentials
 until these adapters are implemented and tested.
 
-## 1. Prepare the local environment
+## 1. Prepare the hosted environment
 
-Copy the templates:
+For the hosted deployment, set these values in the deployment dashboards.
+Do not rely on local `.env` files for Vercel or Render:
 
 ```bash
 cp backend/.env.example backend/.env
 cp frontend/app/.env.example frontend/app/.env.local
 ```
 
-Set these backend values:
+### Render backend environment
 
 ```dotenv
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_PERISHABLE_KEY=<server-compatible-supabase-key>
 SUPABASE_SECRET_KEY=<server-only-secret-key>
 CREDENTIALS_ENCRYPTION_KEY=<fernet-key>
-ALLOWED_WEB_ORIGINS=https://reactant-theta.vercel.app,http://localhost:5173
+ALLOWED_WEB_ORIGINS=https://reactent-theta.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
 PAYPAL_CLIENT_ID=<sandbox-rest-app-client-id>
 PAYPAL_SECRET_KEY=<sandbox-rest-app-secret>
 ```
+
+The Render service's public API origin is:
+
+```text
+https://reactant.onrender.com
+```
+
+### Vercel frontend environment
+
+```dotenv
+VITE_API_BASE_URL=https://reactant.onrender.com/api/v1
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
+```
+
+`ALLOWED_WEB_ORIGINS` must exactly match the browser origin, including
+`https://` and excluding a trailing slash. Add preview deployment origins
+separately only when they are intentionally allowed.
 
 `PUBLIC_API_BASE_URL` is a deployment/tunnel value used when constructing
 provider webhook URLs; it is not currently read from backend settings. The
@@ -188,7 +207,7 @@ deployed development backend. Do not expose Supabase secrets through the
 tunnel. Register the exact Telegram and PayPal webhook URLs against that
 public backend.
 
-The deployed frontend is `https://reactant-theta.vercel.app` and the deployed
+The deployed frontend is `https://reactent-theta.vercel.app` and the deployed
 backend is `https://reactant.onrender.com`. For local testing, the frontend
 uses `http://localhost:5173` and the backend uses
 `http://localhost:8000`; include both frontend origins in

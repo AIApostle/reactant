@@ -1,7 +1,13 @@
 import { getSupabaseClient } from './supabase'
 import type { Session } from '@supabase/supabase-js'
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1').replace(/\/$/, '')
+const deployedApiBaseUrl = 'https://reactant.onrender.com/api/v1'
+const localApiBaseUrl = 'http://localhost:8000/api/v1'
+const apiBaseUrl = (
+  import.meta.env.PROD
+    ? deployedApiBaseUrl
+    : (import.meta.env.VITE_API_BASE_URL || localApiBaseUrl)
+).replace(/\/$/, '')
 
 export type ApiEnvelope<T> = { data: T; request_id?: string }
 export type CollectionEnvelope<T> = { data: T[]; meta?: { next_cursor: string | null; has_more: boolean }; request_id?: string }
