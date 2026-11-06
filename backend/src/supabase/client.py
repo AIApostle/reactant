@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from supabase import Client, create_client
 from supabase.lib.client_options import SyncClientOptions
@@ -18,7 +18,13 @@ class SupabaseSettings(BaseSettings):
     )
 
     supabase_url: str
-    supabase_perishable_key: SecretStr
+    supabase_perishable_key: SecretStr = Field(
+        validation_alias=AliasChoices(
+            "SUPABASE_PERISHABLE_KEY",
+            "SUPABASE_PUBLISHABLE_KEY",
+            "SUPABASE_ANON_KEY",
+        )
+    )
     invitation_delivery_url: str | None = None
     invitation_delivery_token: SecretStr | None = None
     credentials_encryption_key: SecretStr | None = None

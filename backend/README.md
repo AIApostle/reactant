@@ -19,7 +19,8 @@ ignored `.env` file and never commit or log them. Required configuration:
 
 - `SUPABASE_URL`
 - `SUPABASE_PERISHABLE_KEY` (the Supabase publishable/anon key used by the
-  user-scoped API client)
+  user-scoped API client). `SUPABASE_PUBLISHABLE_KEY` and
+  `SUPABASE_ANON_KEY` are accepted aliases for hosted deployments.
 
 Additional configuration:
 
