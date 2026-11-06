@@ -25,27 +25,10 @@
   width: 252px;
   height: 100dvh;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 22px 14px 14px;
   border-right: 1px solid var(--line);
   background: var(--surface);
-  scrollbar-gutter: stable;
-  scrollbar-color: #cbd6ce transparent;
-  scrollbar-width: thin;
-}
-
-.sidebar::-webkit-scrollbar {
-  width: 7px;
-}
-
-.sidebar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.sidebar::-webkit-scrollbar-thumb {
-  border: 2px solid var(--surface);
-  border-radius: 999px;
-  background: #cbd6ce;
 }
 
 .brand-row {
@@ -131,9 +114,29 @@
 }
 
 .main-navigation {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  scrollbar-gutter: stable;
+  scrollbar-color: #cbd6ce transparent;
+  scrollbar-width: thin;
+}
+
+.main-navigation::-webkit-scrollbar {
+  width: 7px;
+}
+
+.main-navigation::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main-navigation::-webkit-scrollbar-thumb {
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: #cbd6ce;
 }
 
 .nav-section-label {
@@ -199,7 +202,8 @@
 }
 
 .sidebar-bottom {
-  margin-top: auto;
+  flex: 0 0 auto;
+  margin-top: 14px;
 }
 
 .sidebar-user {
