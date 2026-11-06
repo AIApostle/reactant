@@ -47,7 +47,8 @@ def get_current_user(
             getattr(request.state, "request_id", "unknown"),
             error.status,
         )
-        if error.status == 429:
+        provider_status = error.status
+        if provider_status == 429:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail={
@@ -55,7 +56,7 @@ def get_current_user(
                     "message": "Authentication could not be completed right now.",
                 },
             ) from error
-        if error.status < 500:
+        if not isinstance(provider_status, int) or provider_status < 500:
             raise _unauthenticated() from error
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
