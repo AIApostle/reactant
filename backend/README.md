@@ -6,7 +6,7 @@ SDK. The application entry point is `main.py`; application modules live under
 
 ## Local setup
 
-Use Python 3.14 and `uv`:
+Use Python 3.11 and `uv`:
 
 ```sh
 uv sync
