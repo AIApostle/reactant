@@ -1,0 +1,118 @@
+@import "@radix-ui/themes/styles.css";
+
+:root {
+  font-family: "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1c2922;
+  background: #f7f9f7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  font-weight: 400;
+
+  --rt-color-accent-1: #f4f8f4;
+  --rt-color-accent-2: #edf5ee;
+  --rt-color-accent-3: #deeddf;
+  --rt-color-accent-4: #cce4d0;
+  --rt-color-accent-5: #b4d8bb;
+  --rt-color-accent-6: #94c49f;
+  --rt-color-accent-7: #70ad81;
+  --rt-color-accent-8: #4a9364;
+  --rt-color-accent-9: #287b52;
+  --rt-color-accent-10: #246f49;
+  --rt-color-accent-11: #216442;
+  --rt-color-accent-12: #193b29;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.reactant-mark {
+  --mark-size: 30px;
+  --node-size: 5px;
+  position: relative;
+  display: inline-block;
+  width: var(--mark-size);
+  height: var(--mark-size);
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 9px;
+  background: #287b52;
+}
+
+.reactant-mark-bond {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--mark-size) * 0.3);
+  height: 1.5px;
+  border-radius: 2px;
+  background: #eaf3eb;
+  transform-origin: left center;
+}
+
+.reactant-mark-bond-left {
+  transform: rotate(125deg);
+}
+
+.reactant-mark-bond-right {
+  transform: rotate(55deg);
+}
+
+.reactant-mark-node {
+  position: absolute;
+  z-index: 1;
+  width: var(--node-size);
+  height: var(--node-size);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.reactant-mark-node-top {
+  top: 25%;
+  left: calc(50% - var(--node-size) / 2);
+}
+
+.reactant-mark-node-left {
+  bottom: 23%;
+  left: 25%;
+}
+
+.reactant-mark-node-right {
+  right: 25%;
+  bottom: 23%;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100dvh;
+  margin: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #43855b;
+  outline-offset: 2px;
+}
+
+::selection {
+  color: #1d4e31;
+  background: #dcecdf;
+}
