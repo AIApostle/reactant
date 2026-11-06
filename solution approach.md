@@ -324,7 +324,7 @@ separately.
 | Entity | Purpose / key fields |
 |---|---|
 | `users` | Authenticated people linked to Supabase Auth identity. |
-| `businesses` | Tenant/workspace; name, slug, timezone, currency, status. |
+| `businesses` | Tenant/workspace; name, slug, timezone, currency (USD by default; ISO 4217), status. |
 | `business_members` | User-to-business membership, role, invitation state. |
 | `business_settings` | Profile, operating hours, policies, support details. |
 | `integrations` | Provider, business ID, status, scopes, external account ID, sync metadata. |

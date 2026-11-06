@@ -11,20 +11,18 @@ import {
   EyeSlash,
   GearSix,
   ImageSquare,
-  InstagramLogo,
   List,
   MagnifyingGlass,
   Package,
-  PaperPlaneTilt,
   Robot,
   ShieldCheck,
   Storefront,
   TelegramLogo,
-  WhatsappLogo,
   X,
 } from '@phosphor-icons/react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import BrandMark from './BrandMark'
+import { getSupabaseClient, isSupabaseConfigured, logAuthEvent } from './supabase'
 import './PublicSite.css'
 
 const currentYear = new Date().getFullYear()
@@ -131,26 +129,18 @@ export function LandingPage() {
 
         <section className="public-integrations-section" id="integrations" aria-labelledby="integrations-title">
           <div className="section-heading integrations-heading">
-            <h2 id="integrations-title">Start with the tools your business already uses.</h2>
-            <p>Reactant is being built around a focused first set of commerce, messaging, and payment connections.</p>
+            <h2 id="integrations-title">Connect your commerce and customer channels.</h2>
+            <p>Bring products from WooCommerce, add them to your Reactant catalog, and connect Telegram conversations.</p>
           </div>
           <div className="integration-groups">
             <IntegrationGroup title="Commerce">
-              <IntegrationItem icon={<Storefront size={18} />} name="WooCommerce" state="MVP" />
-              <IntegrationItem icon={<Storefront size={18} />} name="Shopify" state="Planned" />
-              <IntegrationItem icon={<Package size={18} />} name="Reactant catalog" state="MVP" />
+              <IntegrationItem icon={<Storefront size={18} />} name="WooCommerce" />
+              <IntegrationItem icon={<Package size={18} />} name="Reactant catalog" />
             </IntegrationGroup>
             <IntegrationGroup title="Customer channels">
-              <IntegrationItem icon={<TelegramLogo size={18} />} name="Telegram" state="MVP" />
-              <IntegrationItem icon={<WhatsappLogo size={18} />} name="WhatsApp Business" state="Planned" />
-              <IntegrationItem icon={<InstagramLogo size={18} />} name="Instagram & Messenger" state="Planned" />
-              <IntegrationItem icon={<ChatCircleDots size={18} />} name="Website chat" state="Planned" />
-            </IntegrationGroup>
-            <IntegrationGroup title="Payments">
-              <IntegrationItem icon={<CreditCard size={18} />} name="PayPal" state="MVP" />
+              <IntegrationItem icon={<TelegramLogo size={18} />} name="Telegram" />
             </IntegrationGroup>
           </div>
-          <p className="integration-disclaimer">“MVP” marks initial product scope, not a live availability guarantee. Planned integrations are not available yet; provider features and merchant eligibility vary by country.</p>
         </section>
 
         <section className="platform-section" aria-labelledby="platform-architecture-title">
@@ -231,10 +221,10 @@ function ConnectedSystemsShowcase() {
       <div className="systems-preview-heading"><span><strong>Your business systems</strong><small>Connected through Reactant</small></span><span className="systems-preview-sample">Illustrative</span></div>
       <div className="systems-map">
         <div className="systems-sources">
-          <SystemNode icon={<Storefront size={18} />} name="WooCommerce" state="MVP" />
-          <SystemNode icon={<TelegramLogo size={18} />} name="Telegram" state="MVP" />
-          <SystemNode icon={<CreditCard size={18} />} name="PayPal" state="MVP" />
-          <SystemNode icon={<Package size={18} />} name="Reactant catalog" state="MVP" />
+          <SystemNode icon={<Storefront size={18} />} name="WooCommerce" />
+          <SystemNode icon={<TelegramLogo size={18} />} name="Telegram" />
+          <SystemNode icon={<CreditCard size={18} />} name="PayPal" />
+          <SystemNode icon={<Package size={18} />} name="Reactant catalog" />
         </div>
         <div className="systems-links" aria-hidden="true"><span /><span /><span /><span /></div>
         <div className="systems-agent">
@@ -274,12 +264,11 @@ function IntegrationGroup({ title, children }: { title: string; children: React.
   )
 }
 
-function IntegrationItem({ icon, name, state }: { icon: React.ReactNode; name: string; state?: string }) {
+function IntegrationItem({ icon, name }: { icon: React.ReactNode; name: string }) {
   return (
     <div className="integration-item">
       <span className="integration-item-icon">{icon}</span>
       <strong>{name}</strong>
-      {state && <small>{state}</small>}
     </div>
   )
 }
@@ -322,49 +311,6 @@ function CommerceJourneyShowcase() {
   )
 }
 
-function InboxShowcase() {
-  return (
-    <div className="workflow-preview inbox-preview" role="img" aria-label="Reactant inbox preview showing a customer product question and an agent response">
-      <div className="workflow-preview-topbar">
-        <div className="workflow-preview-brand"><BrandMark className="workflow-preview-mark" /><strong>reactant</strong></div>
-        <span>Olive & Oak Studio</span>
-        <DotsThree size={21} />
-      </div>
-      <div className="inbox-preview-layout">
-        <aside className="inbox-preview-list">
-          <div className="inbox-preview-title"><strong>Inbox</strong><span>3</span></div>
-          <div className="inbox-preview-contact inbox-preview-contact-active">
-            <span className="preview-avatar preview-avatar-coral">AM</span>
-            <span><strong>Ama Mensah</strong><small>Do you have the linen set...</small></span>
-            <time>2m</time>
-          </div>
-          <div className="inbox-preview-contact">
-            <span className="preview-avatar preview-avatar-green">KB</span>
-            <span><strong>Kojo Boateng</strong><small>I'll take the walnut one</small></span>
-            <time>18m</time>
-          </div>
-          <div className="inbox-preview-contact">
-            <span className="preview-avatar preview-avatar-blue">EO</span>
-            <span><strong>Esi Owusu</strong><small>Help with delivery?</small></span>
-            <time>42m</time>
-          </div>
-        </aside>
-        <div className="inbox-preview-conversation">
-          <div className="inbox-preview-person">
-            <span className="preview-avatar preview-avatar-coral">AM</span>
-            <span><strong>Ama Mensah</strong><small>Customer conversation</small></span>
-          </div>
-          <div className="preview-message preview-message-customer">Do you have the linen set in sand?</div>
-          <div className="preview-agent-label"><Robot size={13} /> Reactant agent</div>
-          <div className="preview-message preview-message-agent">The Coastline Linen Set comes in Queen and King. Which size would you like?</div>
-          <div className="preview-product-link"><Package size={17} /><span><strong>Coastline Linen Set</strong><small>From $1,450</small></span><ArrowRight size={14} /></div>
-          <div className="preview-composer"><span>Reply to Ama...</span><PaperPlaneTilt size={15} /></div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function OwnerMessagesShowcase() {
   return (
     <div className="workflow-preview owner-preview" role="img" aria-label="Private Reactant agent message asking the business owner to approve a PayPal checkout">
@@ -389,10 +335,84 @@ function OwnerMessagesShowcase() {
 export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const isSignup = mode === 'signup'
   const [formMessage, setFormMessage] = useState('')
+  const [formError, setFormError] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const navigate = useNavigate()
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setFormMessage('Authentication is not connected yet. Your information was not sent or saved.')
+    setFormMessage('')
+    setFormError('')
+    if (!isSupabaseConfigured()) {
+      logAuthEvent(isSignup ? 'signup_configuration_missing' : 'login_configuration_missing', {}, 'error')
+      setFormError('Authentication is not configured. Contact your administrator.')
+      return
+    }
+
+    const formData = new FormData(event.currentTarget)
+    const email = String(formData.get('email') ?? '').trim()
+    const password = String(formData.get('password') ?? '')
+    setIsSubmitting(true)
+    logAuthEvent(isSignup ? 'signup_started' : 'login_started')
+    try {
+      const supabase = getSupabaseClient()
+      if (isSignup) {
+        const name = String(formData.get('name') ?? '').trim()
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: name } },
+        })
+        if (error) throw error
+        if (!data.session) {
+          logAuthEvent('signup_completed_pending_confirmation')
+          setFormMessage('Check your email to confirm your account, then sign in.')
+          return
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+      }
+      logAuthEvent(isSignup ? 'signup_completed' : 'login_completed')
+      navigate('/app')
+    } catch (error) {
+      logAuthEvent(isSignup ? 'signup_failed' : 'login_failed', {
+        error: error instanceof Error ? error.message : 'unknown_error',
+      }, 'warn')
+      setFormError(error instanceof Error ? error.message : 'Authentication could not be completed.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function sendPasswordReset() {
+    setFormMessage('')
+    setFormError('')
+    if (!isSupabaseConfigured()) {
+      logAuthEvent('password_reset_configuration_missing', {}, 'error')
+      setFormError('Authentication is not configured. Contact your administrator.')
+      return
+    }
+    const emailInput = document.getElementById('auth-email') as HTMLInputElement | null
+    const email = emailInput?.value.trim()
+    if (!email) {
+      setFormError('Enter your email address first.')
+      return
+    }
+    try {
+      logAuthEvent('password_reset_started')
+      const { error } = await getSupabaseClient().auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/login`,
+      })
+      if (error) throw error
+      logAuthEvent('password_reset_completed')
+      setFormMessage('If an account exists for this address, a password reset email has been sent.')
+    } catch (error) {
+      logAuthEvent('password_reset_failed', {
+        error: error instanceof Error ? error.message : 'unknown_error',
+      }, 'warn')
+      setFormError(error instanceof Error ? error.message : 'Password recovery could not be completed.')
+    }
   }
 
   return (
@@ -407,7 +427,6 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
           <h1>Good service should feel personal, even when it scales.</h1>
           <p>Bring your products, conversations, and team into one clear workspace.</p>
         </div>
-        <div className="auth-showcase-wrap" aria-hidden="true"><InboxShowcase /></div>
       </section>
       <section className="auth-form-side">
         <Link className="auth-back-link" to="/">Back to Reactant</Link>
@@ -416,22 +435,23 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
           <h2>{isSignup ? 'Create your account' : 'Welcome back'}</h2>
           <p>{isSignup ? 'Set up your workspace to bring your customer channels together.' : 'Log in to continue to your Reactant workspace.'}</p>
           <form className="auth-form" onSubmit={handleSubmit}>
-            {isSignup && <FormField id="auth-name" label="Your name" type="text" autoComplete="name" />}
-            <FormField id="auth-email" label="Work email" type="email" autoComplete="email" />
-            <FormField id="auth-password" label="Password" type="password" autoComplete={isSignup ? 'new-password' : 'current-password'} />
-            {!isSignup && <button className="auth-forgot-button" type="button" onClick={() => setFormMessage('Password recovery is not connected yet. No reset email was sent.')}>Forgot password?</button>}
+            {isSignup && <FormField id="auth-name" name="name" label="Your name" type="text" autoComplete="name" />}
+            <FormField id="auth-email" name="email" label="Work email" type="email" autoComplete="email" />
+            <FormField id="auth-password" name="password" label="Password" type="password" autoComplete={isSignup ? 'new-password' : 'current-password'} />
+            {!isSignup && <button className="auth-forgot-button" type="button" onClick={() => void sendPasswordReset()}>Forgot password?</button>}
             {formMessage && <p className="auth-preview-note" role="status">{formMessage}</p>}
-            <button className="public-button auth-submit" type="submit">{isSignup ? 'Create account' : 'Log in'} <ArrowRight size={17} /></button>
+            {formError && <p className="auth-preview-note auth-form-error" role="alert">{formError}</p>}
+            <button className="public-button auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Please wait...' : isSignup ? 'Create account' : 'Log in'} <ArrowRight size={17} /></button>
           </form>
           <p className="auth-switch">{isSignup ? 'Already have an account?' : 'New to Reactant?'} <Link to={isSignup ? '/login' : '/signup'}>{isSignup ? 'Log in' : 'Create an account'}</Link></p>
-          <p className="auth-privacy"><ShieldCheck size={15} /> This preview does not submit credentials to a server.</p>
+          <p className="auth-privacy"><ShieldCheck size={15} /> Your account is managed securely by the configured identity provider.</p>
         </div>
       </section>
     </main>
   )
 }
 
-function FormField({ id, label, type, autoComplete }: { id: string; label: string; type: string; autoComplete: string }) {
+function FormField({ id, name, label, type, autoComplete }: { id: string; name: string; label: string; type: string; autoComplete: string }) {
   const [passwordVisible, setPasswordVisible] = useState(false)
   const isPassword = type === 'password'
 
@@ -439,7 +459,7 @@ function FormField({ id, label, type, autoComplete }: { id: string; label: strin
     <div className="auth-field">
       <label htmlFor={id}>{label}</label>
       <div className={isPassword ? 'auth-password-control' : undefined}>
-        <input id={id} type={isPassword && passwordVisible ? 'text' : type} autoComplete={autoComplete} required minLength={isPassword ? 8 : undefined} />
+        <input id={id} name={name} type={isPassword && passwordVisible ? 'text' : type} autoComplete={autoComplete} required minLength={isPassword ? 8 : undefined} />
         {isPassword && (
           <button
             className="auth-password-toggle"

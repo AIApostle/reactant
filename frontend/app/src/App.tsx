@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   ArrowRight,
@@ -43,9 +44,21 @@ import {
 import WorkspaceSettings from './WorkspaceSettings'
 import BrandMark from './BrandMark'
 import './App.css'
+import {
+  apiRequest,
+  apiRequestWithHeaders,
+  businessPath,
+  newIdempotencyKey,
+  type AgentConfig,
+  type Approval,
+  type Business,
+  type Integration,
+  type OwnerMessage,
+} from './api'
+import { getSupabaseClient, isSupabaseConfigured } from './supabase'
 
 type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings'
-type Connection = 'WooCommerce' | 'Telegram' | 'PayPal' | 'Shopify' | 'WhatsApp'
+type Connection = 'WooCommerce' | 'Telegram' | 'PayPal'
 type ConversationStatus = 'Needs reply' | 'Open' | 'Resolved'
 
 type Conversation = {
@@ -68,6 +81,7 @@ type Order = {
   item: string
   date: string
   total: number
+  currency: string
   status: 'Paid' | 'Pending payment' | 'Processing' | 'Cancelled'
   email: string
 }
@@ -78,105 +92,132 @@ type CatalogProduct = {
   description: string
   category: string
   price: number
+  currency: string
   stock: number | null
   images: string[]
+  imageAssetIds: string[]
   available: boolean
   agentCanShare: boolean
 }
 
-function formatCurrency(amount: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
+type ConversationApi = {
+  id: string
+  channel: string
+  status: string
+  customer_name: string
+  last_message: { text: string; created_at: string } | null
+  unread: boolean
+  updated_at: string
 }
 
-const initialConversations: Conversation[] = [
-  {
-    id: 'C-2048',
-    name: 'Ama Mensah',
-    initials: 'AM',
-    color: 'coral',
-    channel: 'Telegram',
-    preview: 'Do you have the linen set in sand?',
-    time: '2 min',
-    status: 'Needs reply',
-    unread: true,
-    messages: [
-      { from: 'customer', text: 'Hi, I saw the linen bedding set on your store.', time: '10:42 AM' },
-      { from: 'agent', text: 'Hello Ama! The Coastline Linen Set is available in Queen and King sizes. Which size are you looking for?', time: '10:42 AM' },
-      { from: 'customer', text: 'Do you have the linen set in sand?', time: '10:44 AM' },
-    ],
-  },
-  {
-    id: 'C-2047',
-    name: 'Kojo Boateng',
-    initials: 'KB',
-    color: 'blue',
-    channel: 'Telegram',
-    preview: 'Thanks, I will take the walnut one.',
-    time: '18 min',
-    status: 'Open',
-    unread: false,
-    messages: [
-      { from: 'customer', text: 'Could you share more about the walnut serving board?', time: '10:12 AM' },
-      { from: 'agent', text: 'It is made from solid walnut and is currently in stock. I can help you add one to your cart.', time: '10:13 AM' },
-      { from: 'customer', text: 'Thanks, I will take the walnut one.', time: '10:26 AM' },
-    ],
-  },
-  {
-    id: 'C-2046',
-    name: 'Esi Owusu',
-    initials: 'EO',
-    color: 'violet',
-    channel: 'Telegram',
-    preview: 'Can someone help with delivery?',
-    time: '42 min',
-    status: 'Needs reply',
-    unread: true,
-    messages: [
-      { from: 'customer', text: 'I placed an order yesterday but I am not sure when it will arrive.', time: '9:51 AM' },
-      { from: 'agent', text: 'I can ask our team to check the delivery details for you.', time: '9:52 AM' },
-      { from: 'customer', text: 'Can someone help with delivery?', time: '9:53 AM' },
-    ],
-  },
-  {
-    id: 'C-2044',
-    name: 'Nana Asare',
-    initials: 'NA',
-    color: 'green',
-    channel: 'Telegram',
-    preview: 'That answers everything, thank you.',
-    time: '1 hr',
-    status: 'Resolved',
-    unread: false,
-    messages: [
-      { from: 'customer', text: 'What is your return policy for the ceramic pieces?', time: '9:04 AM' },
-      { from: 'agent', text: 'Unused items can be returned within 14 days. I can share the full policy if you need it.', time: '9:05 AM' },
-      { from: 'customer', text: 'That answers everything, thank you.', time: '9:08 AM' },
-    ],
-  },
-  {
-    id: 'C-2042',
-    name: 'Abena Kusi',
-    initials: 'AK',
-    color: 'gold',
-    channel: 'Telegram',
-    preview: 'Is the lamp dimmable?',
-    time: '2 hrs',
-    status: 'Open',
-    unread: false,
-    messages: [
-      { from: 'customer', text: 'Is the woven table lamp dimmable?', time: '8:13 AM' },
-      { from: 'agent', text: 'Let me check the product details for you.', time: '8:13 AM' },
-    ],
-  },
-]
+type OrderApi = {
+  id: string
+  customer_name: string
+  customer_email: string | null
+  status: string
+  payment_status: string
+  amount_minor: number
+  currency: string
+  items: { product_name: string; quantity: number }[]
+  created_at: string
+}
 
-const initialOrders: Order[] = [
-  { id: 'RA-2084', customer: 'Nana Asare', initials: 'NA', item: 'Coastline Linen Set · Queen', date: 'Today, 10:28 AM', total: 1450, status: 'Paid', email: 'nana.asare@example.com' },
-  { id: 'RA-2083', customer: 'Kojo Boateng', initials: 'KB', item: 'Walnut Serving Board', date: 'Today, 10:16 AM', total: 385, status: 'Processing', email: 'kojo.boateng@example.com' },
-  { id: 'RA-2082', customer: 'Ama Mensah', initials: 'AM', item: 'Ceramic Pour-over Set', date: 'Today, 9:42 AM', total: 620, status: 'Pending payment', email: 'ama.mensah@example.com' },
-  { id: 'RA-2081', customer: 'Kweku Addo', initials: 'KA', item: 'Woven Table Lamp', date: 'Yesterday, 4:18 PM', total: 890, status: 'Paid', email: 'kweku.addo@example.com' },
-  { id: 'RA-2080', customer: 'Abena Kusi', initials: 'AK', item: 'Coastline Linen Set · King', date: 'Yesterday, 2:05 PM', total: 1750, status: 'Cancelled', email: 'abena.kusi@example.com' },
-]
+type DashboardSummaryApi = {
+  metrics: {
+    conversations?: number
+    orders?: number
+    pending_approvals?: number
+  }
+  agent_status: string
+}
+
+type ProductApi = {
+  id: string
+  name: string
+  description: string | null
+  category: string | null
+  price_minor: number
+  currency: string
+  stock_quantity: number | null
+  status: string
+  agent_enabled: boolean
+  image_asset_ids: string[]
+  image_urls?: string[]
+}
+
+function mapCatalogProduct(product: ProductApi, fallbackImages: string[] = []): CatalogProduct {
+  const images = product.image_urls?.length ? product.image_urls : fallbackImages
+  return {
+    id: product.id,
+    name: product.name,
+    description: product.description ?? '',
+    category: product.category ?? '',
+    price: product.price_minor / 100,
+    currency: product.currency,
+    stock: product.stock_quantity,
+    images,
+    imageAssetIds: product.image_asset_ids,
+    available: product.status === 'active' && product.stock_quantity !== 0,
+    agentCanShare: product.agent_enabled,
+  }
+}
+
+function displayTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function createWebhookSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function nameInitials(name: string) {
+  return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] ?? '').join('').toUpperCase() || 'CU'
+}
+
+function mapConversation(item: ConversationApi): Conversation {
+  const status: ConversationStatus = item.status === 'resolved' ? 'Resolved' : item.status === 'needs_reply' ? 'Needs reply' : 'Open'
+  return {
+    id: item.id,
+    name: item.customer_name,
+    initials: nameInitials(item.customer_name),
+    color: colorForInitials(nameInitials(item.customer_name)),
+    channel: item.channel,
+    preview: item.last_message?.text ?? 'No messages yet',
+    time: displayTime(item.last_message?.created_at ?? item.updated_at),
+    status,
+    unread: item.unread,
+    messages: [],
+  }
+}
+
+function mapOrder(item: OrderApi): Order {
+  const name = item.customer_name
+  const status: Order['status'] = item.status === 'cancelled'
+    ? 'Cancelled'
+    : item.payment_status === 'paid'
+      ? 'Paid'
+      : item.status === 'processing' || item.status === 'completed'
+        ? 'Processing'
+        : 'Pending payment'
+  return {
+    id: item.id,
+    customer: name,
+    initials: nameInitials(name),
+    item: item.items.map((line) => `${line.product_name}${line.quantity > 1 ? ` × ${line.quantity}` : ''}`).join(', '),
+    date: displayTime(item.created_at),
+    total: item.amount_minor / 100,
+    currency: item.currency,
+    status,
+    email: item.customer_email ?? '',
+  }
+}
+
+function formatCurrency(amount: number, currency = 'USD') {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount)
+}
 
 const navigation: { label: string; page: Page; icon: Icon }[] = [
   { label: 'Overview', page: 'overview', icon: House },
@@ -188,7 +229,7 @@ const navigation: { label: string; page: Page; icon: Icon }[] = [
   { label: 'Business agent', page: 'agent', icon: Robot },
   { label: 'Agent messages', page: 'owner-assistant', icon: ChatCircleDots },
   { label: 'Settings', page: 'settings', icon: GearSix },
-]
+] as const
 
 const pageTitles: Record<Page, string> = {
   overview: 'Overview',
@@ -203,23 +244,28 @@ const pageTitles: Record<Page, string> = {
 }
 
 function App() {
+  const routeNavigate = useNavigate()
   const [page, setPage] = useState<Page>('overview')
-  const [conversations, setConversations] = useState(initialConversations)
-  const [selectedConversation, setSelectedConversation] = useState(initialConversations[0].id)
-  const [orders, setOrders] = useState(initialOrders)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [selectedConversation, setSelectedConversation] = useState('')
+  const [orders, setOrders] = useState<Order[]>([])
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([])
-  const [pendingApprovals, setPendingApprovals] = useState(2)
+  const catalogRevision = useRef(0)
+  const [approvals, setApprovals] = useState<Approval[]>([])
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
-  const [connections, setConnections] = useState<Record<Connection, boolean>>({
-    WooCommerce: true,
-    Telegram: true,
-    PayPal: false,
-    Shopify: false,
-    WhatsApp: false,
-  })
-  const [agentEnabled, setAgentEnabled] = useState(true)
+  const [integrations, setIntegrations] = useState<Integration[]>([])
+  const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(null)
+  const [agentConfigEtag, setAgentConfigEtag] = useState<string | null>(null)
+  const [business, setBusiness] = useState<Business | null>(null)
+  const [sessionReady, setSessionReady] = useState(false)
+  const [workspaceLoading, setWorkspaceLoading] = useState(true)
+  const [workspaceError, setWorkspaceError] = useState('')
+  const [userName, setUserName] = useState('Workspace member')
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [workspaceCreating, setWorkspaceCreating] = useState(false)
+  const [resourceErrors, setResourceErrors] = useState<string[]>([])
+  const [overviewMetrics, setOverviewMetrics] = useState<DashboardSummaryApi['metrics']>({})
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [reply, setReply] = useState('')
@@ -227,8 +273,109 @@ function App() {
   const [conversationFilter, setConversationFilter] = useState<'All' | ConversationStatus>('All')
   const [orderFilter, setOrderFilter] = useState('All orders')
 
-  const currentConversation = conversations.find((item) => item.id === selectedConversation) ?? conversations[0]
+  const currentConversation = conversations.find((item) => item.id === selectedConversation)
   const activeOrder = orders.find((item) => item.id === selectedOrder)
+  const pendingApprovals = approvals.filter((item) => item.status === 'pending').length
+  const connections: Record<Connection, boolean> = {
+    WooCommerce: integrations.some((item) => item.provider === 'woocommerce' && item.status === 'connected'),
+    Telegram: integrations.some((item) => item.provider === 'telegram' && item.status === 'connected'),
+    PayPal: integrations.some((item) => item.provider === 'paypal' && item.status === 'connected'),
+  }
+
+  useEffect(() => {
+    let active = true
+    async function loadBusinesses() {
+      if (!isSupabaseConfigured()) {
+        setWorkspaceError('Authentication is not configured. Set the Supabase URL and public anon key to continue.')
+        setWorkspaceLoading(false)
+        return
+      }
+      try {
+        const { data: { session }, error } = await getSupabaseClient().auth.getSession()
+        if (error) throw error
+        if (!session) {
+          routeNavigate('/login', { replace: true })
+          return
+        }
+        const metadataName = session.user.user_metadata.full_name ?? session.user.user_metadata.name
+        setUserName(typeof metadataName === 'string' && metadataName.trim()
+          ? metadataName.trim()
+          : session.user.email ?? 'Workspace member')
+        setSessionReady(true)
+        const response = await apiRequest<Business[]>('/businesses')
+        if (!active) return
+        const preferredId = window.localStorage.getItem('reactant.activeBusinessId')
+        const selected = response.find((item) => item.id === preferredId) ?? response[0] ?? null
+        setBusiness(selected)
+        if (selected) window.localStorage.setItem('reactant.activeBusinessId', selected.id)
+      } catch (error) {
+        if (active) setWorkspaceError(error instanceof Error ? error.message : 'Could not load your workspace.')
+      } finally {
+        if (active) setWorkspaceLoading(false)
+      }
+    }
+    void loadBusinesses()
+    return () => { active = false }
+  }, [routeNavigate])
+
+  useEffect(() => {
+    if (!business) return
+    let active = true
+    const failures: string[] = []
+    const recordFailure = (name: string, reason: unknown) => {
+      failures.push(`${name}: ${reason instanceof Error ? reason.message : 'could not load'}`)
+    }
+    const requestedCatalogRevision = catalogRevision.current
+    const requests: Promise<unknown>[] = []
+    if (page === 'overview') {
+      requests.push(
+        apiRequest<DashboardSummaryApi>(businessPath(business.id, '/dashboard/summary')).then((summary) => {
+          if (active) setOverviewMetrics(summary.metrics)
+        }).catch((reason: unknown) => recordFailure('Overview', reason)),
+      )
+    }
+    if (page === 'inbox') {
+      requests.push(apiRequest<ConversationApi[]>(businessPath(business.id, '/conversations?limit=100')).then((rows) => {
+        if (!active) return
+        setConversations(rows.map(mapConversation))
+        if (rows[0]) setSelectedConversation((current) => current || rows[0].id)
+      }).catch((reason: unknown) => recordFailure('Conversations', reason)))
+    }
+    if (page === 'catalog') {
+      requests.push(apiRequest<ProductApi[]>(businessPath(business.id, '/products?limit=100'), { cache: 'no-store' })
+        .then((rows) => rows.map((product) => mapCatalogProduct(product)))
+        .then((rows) => {
+          if (active && catalogRevision.current === requestedCatalogRevision) setCatalogProducts(rows)
+        }).catch((reason: unknown) => recordFailure('Catalog', reason)))
+    }
+    if (page === 'orders') {
+      requests.push(apiRequest<OrderApi[]>(businessPath(business.id, '/orders?limit=100')).then((rows) => {
+        if (active) setOrders(rows.map(mapOrder))
+      }).catch((reason: unknown) => recordFailure('Orders', reason)))
+    }
+    if (page === 'approvals' || page === 'owner-assistant') {
+      requests.push(apiRequest<Approval[]>(businessPath(business.id, '/approvals?status=pending&limit=100')).then((rows) => {
+        if (active) setApprovals(rows)
+      }).catch((reason: unknown) => recordFailure('Approvals', reason)))
+    }
+    if (page === 'integrations' || page === 'settings' || page === 'agent') {
+      requests.push(apiRequest<Integration[]>(businessPath(business.id, '/integrations')).then((rows) => {
+        if (active) setIntegrations(rows)
+      }).catch((reason: unknown) => recordFailure('Integrations', reason)))
+    }
+    if (page === 'agent') {
+      requests.push(apiRequestWithHeaders<AgentConfig>(businessPath(business.id, '/agent')).then(({ data, headers }) => {
+        if (active) {
+          setAgentConfig(data)
+          setAgentConfigEtag(headers.get('ETag'))
+        }
+      }).catch((reason: unknown) => recordFailure('Business Agent', reason)))
+    }
+    void Promise.all(requests).then(() => {
+      if (active) setResourceErrors(failures)
+    })
+    return () => { active = false }
+  }, [business, page])
 
   useEffect(() => {
     if (!toast) return
@@ -254,44 +401,60 @@ function App() {
     setSelectedOrder(null)
   }
 
-  function sendReply(event: React.FormEvent<HTMLFormElement>) {
+  const updateBusiness = useCallback((updated: Business) => {
+    setBusiness((current) => current ? { ...current, ...updated } : updated)
+  }, [])
+
+  async function sendReply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!reply.trim()) return
-    setConversations((items) =>
-      items.map((item) =>
-        item.id === selectedConversation
-          ? {
-              ...item,
-              preview: reply.trim(),
-              time: 'now',
-              status: 'Open',
-              messages: [...item.messages, { from: 'staff', text: reply.trim(), time: 'Now' }],
-            }
-          : item,
-      ),
-    )
-    setReply('')
-    setToast('Reply sent in this preview')
+    if (!reply.trim() || !business || !selectedConversation) return
+    try {
+      const message = await apiRequest<{ sender_type: 'customer' | 'agent' | 'staff'; text: string; created_at: string }>(
+        businessPath(business.id, `/conversations/${selectedConversation}/messages`),
+        {
+          method: 'POST',
+          headers: { 'Idempotency-Key': newIdempotencyKey() },
+          body: JSON.stringify({ text: reply.trim(), visibility: 'customer' }),
+        },
+      )
+      setConversations((items) => items.map((item) => item.id === selectedConversation
+        ? { ...item, preview: message.text, time: displayTime(message.created_at), status: 'Needs reply', messages: [...item.messages, { from: 'staff', text: message.text, time: displayTime(message.created_at) }] }
+        : item))
+      setReply('')
+      setToast('Reply queued for delivery')
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'The reply could not be sent.')
+    }
   }
 
-  function setConversationStatus(id: string, status: ConversationStatus) {
-    setConversations((items) => items.map((item) => item.id === id ? { ...item, status, unread: false } : item))
-    setToast(status === 'Resolved' ? 'Conversation marked as resolved' : 'Conversation reopened')
+  async function setConversationStatus(id: string, status: ConversationStatus) {
+    if (!business) return
+    const apiStatus = status === 'Needs reply' ? 'needs_reply' : status.toLowerCase()
+    try {
+      await apiRequest(businessPath(business.id, `/conversations/${id}`), {
+        method: 'PATCH',
+        body: JSON.stringify({ status: apiStatus }),
+      })
+      setConversations((items) => items.map((item) => item.id === id ? { ...item, status, unread: false } : item))
+      setToast(status === 'Resolved' ? 'Conversation marked as resolved' : 'Conversation reopened')
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Conversation status could not be updated.')
+    }
   }
 
-  function decideApproval(orderId: string, decision: 'approve' | 'reject') {
-    setOrders((items) =>
-      items.map((item) =>
-        item.id === orderId ? { ...item, status: decision === 'approve' ? 'Pending payment' : 'Cancelled' } : item,
-      ),
-    )
-    setPendingApprovals((count) => Math.max(0, count - 1))
-    setToast(decision === 'approve' ? 'Approval recorded in this preview' : 'Request declined in this preview')
-  }
-
-  function resolveHandoffApproval() {
-    setPendingApprovals((count) => Math.max(0, count - 1))
-    setToast('Handoff reviewed in this preview')
+  async function decideApproval(approvalId: string, decision: 'approved' | 'rejected') {
+    if (!business) return
+    try {
+      const updated = await apiRequest<Approval>(businessPath(business.id, `/approvals/${approvalId}/decision`), {
+        method: 'POST',
+        headers: { 'Idempotency-Key': newIdempotencyKey() },
+        body: JSON.stringify({ decision }),
+      })
+      setApprovals((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setToast(decision === 'approved' ? 'Approval submitted' : 'Approval declined')
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'The approval decision could not be submitted.')
+    }
   }
 
   const visibleConversations = useMemo(() => conversations.filter((conversation) => {
@@ -316,38 +479,31 @@ function App() {
     }
   }, [conversations, orders, searchTerm])
 
-  function completeConnection(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!connectionDialog) return
-    setConnections((items) => ({ ...items, [connectionDialog]: true }))
-    setToast(`${connectionDialog} connected in this preview`)
-    setConnectionDialog(null)
-  }
-
-  function createPreviewOrder(customer: string, item: string, total: number) {
-    const nameParts = customer.trim().split(/\s+/)
-    const initials = nameParts.slice(0, 2).map((part) => part[0]).join('').toUpperCase()
-    const emailName = customer.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '')
-    setOrders((items) => [{
-      id: `RA-${String(Date.now()).slice(-4)}`,
-      customer: customer.trim(),
-      initials,
-      item: item.trim(),
-      date: 'Today, just now',
-      total,
-      status: 'Pending payment',
-      email: `${emailName || 'customer'}@example.com`,
-    }, ...items])
-    setSelectedOrder(null)
-    setToast('Sample order created in this preview')
-  }
-
-  function openConversation(id: string) {
+  async function openConversation(id: string) {
+    if (!business) return
     setSelectedConversation(id)
     setPage('inbox')
-    setConversations((items) => items.map((item) => item.id === id ? { ...item, unread: false } : item))
     setSearchOpen(false)
     setSearchTerm('')
+    try {
+      const [, messages] = await Promise.all([
+        apiRequest(businessPath(business.id, `/conversations/${id}/read`), { method: 'POST' }),
+        apiRequest<{ sender_type: 'customer' | 'agent' | 'staff'; text: string; created_at: string }[]>(businessPath(business.id, `/conversations/${id}/messages?limit=100`)),
+      ])
+      setConversations((items) => items.map((item) => item.id === id
+        ? {
+            ...item,
+            unread: false,
+            messages: messages.map((message) => ({
+              from: message.sender_type,
+              text: message.text,
+              time: displayTime(message.created_at),
+            })),
+          }
+        : item))
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'The conversation could not be loaded.')
+    }
   }
 
   function openOrder(id: string) {
@@ -363,6 +519,56 @@ function App() {
     setSearchTerm('')
   }
 
+  async function createWorkspace(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!workspaceName.trim()) return
+    setWorkspaceCreating(true)
+    setWorkspaceError('')
+    try {
+      const created = await apiRequest<Business>('/businesses', {
+        method: 'POST',
+        body: JSON.stringify({ name: workspaceName.trim(), currency: 'USD', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }),
+      })
+      setBusiness(created)
+      window.localStorage.setItem('reactant.activeBusinessId', created.id)
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : 'Workspace could not be created.')
+    } finally {
+      setWorkspaceCreating(false)
+    }
+  }
+
+  async function signOut() {
+    try {
+      const { error } = await getSupabaseClient().auth.signOut()
+      if (error) throw error
+      routeNavigate('/login', { replace: true })
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Sign out could not be completed.')
+    }
+  }
+
+  if (workspaceLoading || !sessionReady) {
+    return <WorkspaceGate message={workspaceError || 'Loading your workspace...'} />
+  }
+  if (workspaceError && !business) {
+    return <WorkspaceGate message={workspaceError} onRetry={() => window.location.reload()} />
+  }
+  if (!business) {
+    return (
+      <WorkspaceGate>
+        <form className="workspace-create-form" onSubmit={(event) => void createWorkspace(event)}>
+          <h1>Create your business workspace</h1>
+          <p>Your workspace keeps your business data, channels, and agent settings together.</p>
+          <label className="field-label" htmlFor="workspace-name">Business name</label>
+          <TextField.Root id="workspace-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} required maxLength={160} />
+          {workspaceError && <p className="api-error" role="alert">{workspaceError}</p>}
+          <Button type="submit" disabled={workspaceCreating || !workspaceName.trim()}>{workspaceCreating ? 'Creating workspace...' : 'Create workspace'}</Button>
+        </form>
+      </WorkspaceGate>
+    )
+  }
+
   return (
     <Theme accentColor="grass" grayColor="slate" radius="medium" scaling="100%" appearance="light">
       <div className="app-shell">
@@ -372,9 +578,11 @@ function App() {
           navigate={navigate}
           mobileNavOpen={mobileNavOpen}
           close={() => setMobileNavOpen(false)}
-          notify={setToast}
           inboxCount={conversations.filter((conversation) => conversation.unread).length}
           approvalCount={pendingApprovals}
+          businessName={business.name}
+          userName={userName}
+          role={business.role}
         />
         <div className="workspace">
           <header className="topbar">
@@ -382,10 +590,9 @@ function App() {
               <List size={21} />
             </Button>
             <div className="breadcrumb">
-              <span className="breadcrumb-workspace">Olive & Oak Studio</span>
+              <span className="breadcrumb-workspace">{business.name}</span>
               <CaretRight size={14} />
               <span>{pageTitles[page]}</span>
-              <Badge color="gray" variant="soft" radius="full" className="preview-badge">Preview</Badge>
             </div>
             <div className="topbar-actions">
               <Button variant="surface" className="search-trigger" onClick={() => { setSearchTerm(''); setSearchOpen(true) }}>
@@ -393,35 +600,45 @@ function App() {
                 <span>Search</span>
                 <kbd>⌘ K</kbd>
               </Button>
-              <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setToast('You are all caught up')}>
+              <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setToast('Notifications will appear here when available.')}>
                 <Bell size={19} />
                 <span className="notification-mark" />
               </button>
-              <button className="profile-button" aria-label="Account settings" onClick={() => navigate('settings')}>
-                <span className="profile-avatar">AO</span>
+              <button className="profile-button" aria-label="Sign out" onClick={() => void signOut()}>
+                <span className="profile-avatar">{nameInitials(business.name)}</span>
                 <CaretDown size={14} />
               </button>
             </div>
           </header>
 
           <main className="main-content">
+            {resourceErrors.length > 0 && (
+              <div className="api-error resource-errors" role="alert">
+                <strong>Some workspace data could not be loaded.</strong>
+                <ul>{resourceErrors.map((error) => <li key={error}>{error}</li>)}</ul>
+              </div>
+            )}
             {page === 'overview' && (
               <Overview
-                agentEnabled={agentEnabled}
+                agentEnabled={agentConfig?.enabled ?? false}
                 conversations={conversations}
                 orders={orders}
+                overviewMetrics={overviewMetrics}
                 catalogProductCount={catalogProducts.length}
                 connections={connections}
                 navigate={navigate}
                 openConversation={openConversation}
                 openOrder={openOrder}
-                setConnectionDialog={setConnectionDialog}
                 paymentConnected={connections.PayPal}
+                pendingApprovals={pendingApprovals}
+                businessName={business.name}
+                currency={business.currency}
               />
             )}
             {page === 'inbox' && (
               <Inbox
                 conversations={visibleConversations}
+                allConversations={conversations}
                 selectedConversation={currentConversation}
                 filter={conversationFilter}
                 setFilter={setConversationFilter}
@@ -436,9 +653,12 @@ function App() {
             )}
             {page === 'catalog' && (
               <Catalog
+                businessId={business.id}
                 products={catalogProducts}
                 setProducts={setCatalogProducts}
+                onMutationStart={() => { catalogRevision.current += 1 }}
                 notify={setToast}
+                currency={business.currency}
               />
             )}
             {page === 'orders' && (
@@ -450,72 +670,37 @@ function App() {
                 search={searchTerm}
                 setSearch={setSearchTerm}
                 selectOrder={(id) => setSelectedOrder(id)}
-                createOrder={createPreviewOrder}
               />
             )}
-            {page === 'approvals' && <Approvals orders={orders} decide={decideApproval} resolveHandoff={resolveHandoffApproval} pendingCount={pendingApprovals} />}
+            {page === 'approvals' && <Approvals approvals={approvals} decide={decideApproval} />}
             {page === 'integrations' && (
-              <Integrations connections={connections} setConnectionDialog={setConnectionDialog} />
+              <Integrations businessId={business.id} integrations={integrations} setIntegrations={setIntegrations} notify={setToast} />
             )}
             {page === 'agent' && (
-              <AgentSettings enabled={agentEnabled} setEnabled={setAgentEnabled} notify={setToast} paymentConnected={connections.PayPal} />
+              <AgentSettings
+                businessId={business.id}
+                config={agentConfig}
+                etag={agentConfigEtag}
+                setConfig={setAgentConfig}
+                setEtag={setAgentConfigEtag}
+                notify={setToast}
+                paymentConnected={connections.PayPal}
+                integrations={integrations}
+              />
             )}
-            {page === 'settings' && <WorkspaceSettings notify={setToast} paymentConnected={connections.PayPal} />}
-            {page === 'owner-assistant' && <OwnerAssistant notify={setToast} resolveApproval={resolveHandoffApproval} />}
+            {page === 'settings' && (
+              <WorkspaceSettings
+                businessId={business.id}
+                business={business}
+                integrations={integrations}
+                notify={setToast}
+                onBusinessUpdated={updateBusiness}
+                openIntegrations={() => navigate('integrations')}
+              />
+            )}
+            {page === 'owner-assistant' && <OwnerAssistant businessId={business.id} notify={setToast} decideApproval={decideApproval} approvals={approvals} />}
           </main>
         </div>
-
-        <Dialog.Root open={connectionDialog !== null} onOpenChange={(open) => !open && setConnectionDialog(null)}>
-          <Dialog.Content className="dialog-content">
-            <Dialog.Title className="dialog-title">Connect {connectionDialog ?? 'an integration'}</Dialog.Title>
-            <Dialog.Description className="dialog-description">
-              {!connectionDialog
-                ? 'Choose an integration to connect.'
-                : connectionDialog === 'PayPal'
-                ? 'Connect PayPal for customer checkout and payment verification.'
-                : `Add your ${connectionDialog} account to Olive & Oak Studio. Credentials stay private to your workspace.`}
-            </Dialog.Description>
-            <form className="connection-form" onSubmit={completeConnection}>
-              {connectionDialog !== 'PayPal' && (
-                <label className="field-label" htmlFor="connection-name">
-                  {connectionDialog === 'WooCommerce' ? 'Store URL' : connectionDialog === 'Telegram' ? 'Telegram bot token' : connectionDialog === 'Shopify' ? 'Shopify store domain' : 'Business phone number ID'}
-                </label>
-              )}
-              {connectionDialog !== 'PayPal' && (
-                <TextField.Root id="connection-name" type={connectionDialog === 'Telegram' ? 'password' : 'text'} placeholder={connectionDialog === 'WooCommerce' ? 'https://yourstore.com' : connectionDialog === 'Shopify' ? 'your-store.myshopify.com' : connectionDialog === 'Telegram' ? 'Paste your bot token' : `Enter ${connectionDialog} details`} required />
-              )}
-              {connectionDialog === 'WooCommerce' && (
-                <>
-                  <label className="field-label" htmlFor="connection-secret">REST API consumer key</label>
-                  <TextField.Root id="connection-secret" type="password" placeholder="Paste your consumer key" required />
-                  <label className="field-label" htmlFor="connection-secret-two">REST API consumer secret</label>
-                  <TextField.Root id="connection-secret-two" type="password" placeholder="Paste your consumer secret" required />
-                </>
-              )}
-              {connectionDialog === 'WhatsApp' && (
-                <>
-                  <label className="field-label" htmlFor="connection-secret">Access token</label>
-                  <TextField.Root id="connection-secret" type="password" placeholder="Paste your access token" required />
-                </>
-              )}
-              {connectionDialog === 'PayPal' && (
-                <>
-                  <p className="form-note">PayPal will be connected through its secure authorization flow. Reactant will only use it to create customer checkout sessions and verify payments. It cannot access your balance or send payouts.</p>
-                  <label className="field-label" htmlFor="connection-secret">Environment</label>
-                  <select id="connection-secret" className="settings-select" defaultValue="Sandbox">
-                    <option>Sandbox</option>
-                    <option>Live</option>
-                  </select>
-                </>
-              )}
-              <p className="form-note">Preview only. Your entries are not saved and will not be sent to the provider.</p>
-              <div className="dialog-actions">
-                <Button type="button" variant="soft" color="gray" onClick={() => setConnectionDialog(null)}>Cancel</Button>
-                <Button type="submit">{connectionDialog === 'PayPal' ? 'Continue with PayPal' : 'Save connection'}</Button>
-              </div>
-            </form>
-          </Dialog.Content>
-        </Dialog.Root>
 
         <Dialog.Root open={searchOpen} onOpenChange={(open) => setSearchOpen(open)}>
           <Dialog.Content className="search-dialog">
@@ -583,7 +768,17 @@ function App() {
   )
 }
 
-function Sidebar({ page, navigate, mobileNavOpen, close, notify, inboxCount, approvalCount }: { page: Page; navigate: (page: Page) => void; mobileNavOpen: boolean; close: () => void; notify: (message: string) => void; inboxCount: number; approvalCount: number }) {
+function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCount, businessName, userName, role }: {
+  page: Page
+  navigate: (page: Page) => void
+  mobileNavOpen: boolean
+  close: () => void
+  inboxCount: number
+  approvalCount: number
+  businessName: string
+  userName: string
+  role: Business['role']
+}) {
   return (
     <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
       <div className="brand-row">
@@ -592,8 +787,8 @@ function Sidebar({ page, navigate, mobileNavOpen, close, notify, inboxCount, app
         <button className="mobile-close" aria-label="Close navigation" onClick={close}><X size={19} /></button>
       </div>
       <button className="workspace-switcher" onClick={() => navigate('overview')}>
-        <span className="workspace-avatar">O</span>
-        <span className="workspace-name"><strong>Olive & Oak Studio</strong><small>Sample workspace</small></span>
+        <span className="workspace-avatar">{nameInitials(businessName).slice(0, 1)}</span>
+        <span className="workspace-name"><strong>{businessName}</strong><small>Business workspace</small></span>
         <CaretDown size={15} />
       </button>
       <nav className="main-navigation" aria-label="Main navigation">
@@ -603,14 +798,9 @@ function Sidebar({ page, navigate, mobileNavOpen, close, notify, inboxCount, app
         {navigation.slice(5).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} />)}
       </nav>
       <div className="sidebar-bottom">
-        <button className="sidebar-help" onClick={() => notify('The help center will be available in the full workspace.')}>
-          <span className="help-icon"><ChatCircleDots size={17} /></span>
-          <span><strong>Need a hand?</strong><small>Visit the help center</small></span>
-          <ArrowUpRight size={14} />
-        </button>
         <div className="sidebar-user">
-          <span className="user-avatar">AO</span>
-          <span className="user-meta"><strong>Ada Okafor</strong><small>Workspace owner</small></span>
+          <span className="user-avatar">{nameInitials(userName)}</span>
+          <span className="user-meta"><strong>{userName}</strong><small>{role?.replace('_', ' ') ?? 'Workspace member'}</small></span>
           <DotsThree size={20} />
         </div>
       </div>
@@ -626,6 +816,19 @@ function NavItem({ item, active, navigate, count }: { item: { label: string; pag
       <span>{item.label}</span>
       {count !== undefined && count > 0 && <span className={`nav-count ${item.page === 'inbox' && active ? 'nav-count-active' : ''}`}>{count}</span>}
     </button>
+  )
+}
+
+function WorkspaceGate({ message, onRetry, children }: { message?: string; onRetry?: () => void; children?: React.ReactNode }) {
+  return (
+    <Theme accentColor="grass" grayColor="slate" radius="medium" scaling="100%" appearance="light">
+      <main className="workspace-gate">
+        <Link className="public-brand" to="/"><BrandMark className="public-brand-mark" /><span>reactant</span></Link>
+        <section className="panel workspace-gate-panel">
+          {children ?? <><h1>Your workspace</h1><p role={onRetry ? 'alert' : 'status'}>{message}</p>{onRetry && <Button onClick={onRetry}>Try again</Button>}</>}
+        </section>
+      </main>
+    </Theme>
   )
 }
 
@@ -646,27 +849,34 @@ function Overview({
   agentEnabled,
   conversations,
   orders,
+  overviewMetrics,
   catalogProductCount,
   connections,
   navigate,
   openConversation,
   openOrder,
-  setConnectionDialog,
   paymentConnected,
+  pendingApprovals,
+  businessName,
+  currency,
 }: {
   agentEnabled: boolean
   conversations: Conversation[]
   orders: Order[]
+  overviewMetrics: DashboardSummaryApi['metrics']
   catalogProductCount: number
   connections: Record<Connection, boolean>
   navigate: (page: Page) => void
   openConversation: (id: string) => void
   openOrder: (id: string) => void
-  setConnectionDialog: (connection: Connection) => void
   paymentConnected: boolean
+  pendingApprovals: number
+  businessName: string
+  currency: string
 }) {
   const paidOrders = orders.filter((order) => order.status === 'Paid' || order.status === 'Processing').length
   const needsReply = conversations.filter((conversation) => conversation.status === 'Needs reply').length
+  const sales = orders.filter((order) => order.status === 'Paid' || order.status === 'Processing').reduce((total, order) => total + order.total, 0)
   const productSourceReady = connections.WooCommerce || catalogProductCount > 0
   const productSourceDescription = catalogProductCount > 0
     ? `${connections.WooCommerce ? 'WooCommerce sync and ' : ''}${catalogProductCount} Reactant catalog ${catalogProductCount === 1 ? 'product' : 'products'}`
@@ -676,17 +886,16 @@ function Overview({
   return (
     <div className="page-body overview-page">
       <PageHeading
-        title="Good morning, Ada"
-        description="Here’s what’s happening across your business today."
-        meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Sample data</Badge>}
+        title={`Welcome to ${businessName}`}
+        description="Here is the latest activity available in your workspace."
         action={<Button onClick={() => navigate('integrations')}><Plus size={17} /> Connect a channel</Button>}
       />
 
       <section className="metric-grid" aria-label="Business summary">
-        <Metric label="Conversations today" value="28" change="+6 from yesterday" icon={ChatCircleDots} positive />
-        <Metric label="Orders this week" value="23" change="4 awaiting payment" icon={ShoppingBagOpen} />
-        <Metric label="Sales this week" value={formatCurrency(8420)} change="+12% from last week" icon={CreditCard} positive />
-        <Metric label="Need your attention" value={`${needsReply + 2}`} change={`${needsReply} conversations · 2 approvals`} icon={WarningCircle} attention />
+        <Metric label="Conversations" value={String(overviewMetrics.conversations ?? conversations.length)} change="In this workspace" icon={ChatCircleDots} />
+        <Metric label="Orders" value={String(overviewMetrics.orders ?? orders.length)} change={`${paidOrders} paid or processing`} icon={ShoppingBagOpen} />
+        <Metric label="Sales" value={formatCurrency(sales, currency)} change="Paid or processing orders" icon={CreditCard} />
+        <Metric label="Need your attention" value={`${needsReply + (overviewMetrics.pending_approvals ?? pendingApprovals)}`} change={`${needsReply} conversations · ${overviewMetrics.pending_approvals ?? pendingApprovals} approvals`} icon={WarningCircle} attention />
       </section>
 
       <section className="overview-primary-grid">
@@ -696,6 +905,7 @@ function Overview({
             <button className="text-link" onClick={() => navigate('inbox')}>Open inbox <ArrowRight size={15} /></button>
           </div>
           <div className="conversation-preview-list">
+            {conversations.length === 0 && <p className="empty-list">Customer conversations will appear here when a channel receives a message.</p>}
             {conversations.slice(0, 4).map((conversation) => (
               <button className="conversation-preview-row" key={conversation.id} onClick={() => openConversation(conversation.id)}>
                 <Avatar initials={conversation.initials} color={conversation.color} />
@@ -734,11 +944,12 @@ function Overview({
             <button className="text-link" onClick={() => navigate('orders')}>View all <ArrowRight size={15} /></button>
           </div>
           <div className="latest-orders-list">
+            {orders.length === 0 && <p className="empty-list">Orders from connected channels will appear here.</p>}
             {orders.slice(0, 3).map((order) => (
               <button className="latest-order-row" key={order.id} onClick={() => openOrder(order.id)}>
                 <span className="order-icon"><ShoppingBagOpen size={18} /></span>
                 <span className="latest-order-copy"><strong>{order.customer}</strong><small>{order.id} <span>·</span> {order.item}</small></span>
-                <span className="latest-order-total">{formatCurrency(order.total)}</span>
+                <span className="latest-order-total">{formatCurrency(order.total, order.currency)}</span>
                 <OrderStatus status={order.status} />
               </button>
             ))}
@@ -759,11 +970,10 @@ function Overview({
               : <button className="setup-item setup-next" onClick={() => navigate('integrations')}><span className="setup-step-icon"><TelegramLogo size={16} /></span><span><strong>Connect a customer channel</strong><small>Choose where your agent can respond</small></span><ArrowRight size={16} /></button>}
             {paymentConnected
               ? <div className="setup-item done"><CheckCircle size={18} weight="fill" /><span><strong>Payments connected</strong><small>PayPal is ready for checkout</small></span></div>
-              : <button className="setup-item setup-next" onClick={() => setConnectionDialog('PayPal')}><span className="setup-step-icon"><CreditCard size={16} /></span><span><strong>Set up payments</strong><small>Connect PayPal to accept payments</small></span><ArrowRight size={16} /></button>}
+              : <button className="setup-item setup-next" onClick={() => navigate('integrations')}><span className="setup-step-icon"><CreditCard size={16} /></span><span><strong>Set up payments</strong><small>Connect PayPal to accept payments</small></span><ArrowRight size={16} /></button>}
           </div>
         </div>
       </section>
-      <p className="preview-footnote"><InfoIcon /> This workspace contains sample data. Changes in this preview are not sent to customers or providers.</p>
     </div>
   )
 }
@@ -776,10 +986,6 @@ function Metric({ label, value, change, icon: IconComponent, positive, attention
       <span className={`metric-change ${positive ? 'change-positive' : ''}`}>{positive && <ArrowUpRight size={13} />}{change}</span>
     </article>
   )
-}
-
-function InfoIcon() {
-  return <WarningCircle size={15} />
 }
 
 function readCatalogImage(file: File) {
@@ -795,13 +1001,19 @@ function readCatalogImage(file: File) {
 }
 
 function Catalog({
+  businessId,
   products,
   setProducts,
+  onMutationStart,
   notify,
+  currency,
 }: {
+  businessId: string
   products: CatalogProduct[]
   setProducts: React.Dispatch<React.SetStateAction<CatalogProduct[]>>
+  onMutationStart: () => void
   notify: (message: string) => void
+  currency: string
 }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -811,7 +1023,11 @@ function Catalog({
   const [price, setPrice] = useState('')
   const [stock, setStock] = useState('')
   const [images, setImages] = useState<string[]>([])
+  const [imageAssetIds, setImageAssetIds] = useState<string[]>([])
+  const [imageFiles, setImageFiles] = useState<(File | null)[]>([])
   const [readingImages, setReadingImages] = useState(false)
+  const [savingProduct, setSavingProduct] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
   const [agentCanShare, setAgentCanShare] = useState(true)
   const [formError, setFormError] = useState('')
   const [search, setSearch] = useState('')
@@ -825,8 +1041,11 @@ function Catalog({
     setPrice(product ? String(product.price) : '')
     setStock(product?.stock === null || product?.stock === undefined ? '' : String(product.stock))
     setImages(product?.images ?? [])
+    setImageAssetIds(product?.imageAssetIds ?? [])
+    setImageFiles(product?.images.map(() => null) ?? [])
     setAgentCanShare(product?.agentCanShare ?? true)
     setFormError('')
+    setSuccessMessage('')
     setDialogOpen(true)
   }
 
@@ -852,6 +1071,8 @@ function Catalog({
     try {
       const loadedImages = await Promise.all(selected.map(readCatalogImage))
       setImages((current) => [...current, ...loadedImages])
+      setImageAssetIds((current) => [...current, ...selected.map(() => '')])
+      setImageFiles((current) => [...current, ...selected])
       setFormError('')
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Could not load the selected images.')
@@ -860,7 +1081,7 @@ function Catalog({
     }
   }
 
-  function saveProduct(event: React.FormEvent<HTMLFormElement>) {
+  async function saveProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (images.length === 0) {
       setFormError('Add at least one product photo.')
@@ -880,34 +1101,104 @@ function Catalog({
       setFormError('Stock must be a whole number of zero or more.')
       return
     }
-    const product: CatalogProduct = {
-      id: editingId ?? `manual-${Date.now()}`,
-      name: name.trim(),
-      description: description.trim(),
-      category: category.trim(),
-      price: parsedPrice,
-      stock: parsedStock,
-      images,
-      available: parsedStock !== 0,
-      agentCanShare,
+    setSavingProduct(true)
+    setFormError('')
+    setSuccessMessage('')
+    onMutationStart()
+    try {
+      const assetIds = [...imageAssetIds]
+      for (let index = 0; index < images.length; index += 1) {
+        const file = imageFiles[index]
+        if (!file || assetIds[index]) continue
+        const upload = await apiRequest<{
+          asset_id: string
+          upload_url: string
+          required_headers: Record<string, string>
+        }>(businessPath(businessId, '/media/uploads'), {
+          method: 'POST',
+          body: JSON.stringify({
+            file_name: file.name,
+            content_type: file.type,
+            size_bytes: file.size,
+            purpose: 'catalog_product',
+          }),
+        })
+        const uploadUrl = new URL(upload.upload_url)
+        if (uploadUrl.protocol !== 'https:' && uploadUrl.hostname !== 'localhost' && uploadUrl.hostname !== '127.0.0.1') {
+          throw new Error('The image service returned an insecure upload URL.')
+        }
+        const uploaded = await fetch(upload.upload_url, {
+          method: 'PUT',
+          headers: upload.required_headers,
+          body: file,
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+        })
+        if (!uploaded.ok) throw new Error(`Could not upload ${file.name} (HTTP ${uploaded.status}).`)
+        await apiRequest(businessPath(businessId, `/media/${encodeURIComponent(upload.asset_id)}/complete`), { method: 'POST' })
+        assetIds[index] = upload.asset_id
+        setImageAssetIds([...assetIds])
+        setImageFiles((current) => current.map((item, currentIndex) => currentIndex === index ? null : item))
+      }
+
+      const body = {
+        name: name.trim(),
+        description: description.trim() || null,
+        category: category.trim() || null,
+        price_minor: Math.round(parsedPrice * 100),
+        currency: editingId ? products.find((item) => item.id === editingId)?.currency ?? currency : currency,
+        stock_quantity: parsedStock,
+        status: 'active',
+        agent_enabled: agentCanShare,
+        image_asset_ids: assetIds,
+      }
+      const saved = await apiRequest<ProductApi>(
+        businessPath(businessId, editingId ? `/products/${encodeURIComponent(editingId)}` : '/products'),
+        {
+          method: editingId ? 'PATCH' : 'POST',
+          body: JSON.stringify(body),
+        },
+      )
+      const product = mapCatalogProduct(saved, images)
+      setProducts((current) => editingId
+        ? current.map((item) => item.id === editingId ? product : item)
+        : [product, ...current],
+      )
+      setDialogOpen(false)
+      const message = editingId ? 'Product updated and visible in your catalog.' : 'Product added and visible in your catalog.'
+      setSuccessMessage(message)
+      notify(message)
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'The product could not be saved.')
+    } finally {
+      setSavingProduct(false)
     }
-    setProducts((current) => editingId
-      ? current.map((item) => item.id === editingId ? product : item)
-      : [product, ...current],
-    )
-    setDialogOpen(false)
-    notify(editingId ? 'Product updated in this preview' : 'Product added to this preview catalog')
   }
 
-  function toggleAgentAccess(productId: string) {
-    setProducts((current) => current.map((product) =>
-      product.id === productId ? { ...product, agentCanShare: !product.agentCanShare } : product,
-    ))
+  async function toggleAgentAccess(product: CatalogProduct) {
+    try {
+      onMutationStart()
+      const updated = await apiRequest<ProductApi>(
+        businessPath(businessId, `/products/${encodeURIComponent(product.id)}`),
+        { method: 'PATCH', body: JSON.stringify({ agent_enabled: !product.agentCanShare }) },
+      )
+      const mapped = mapCatalogProduct(updated, product.images)
+      setProducts((current) => current.map((item) => item.id === product.id ? mapped : item))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Agent access could not be updated.')
+    }
   }
 
-  function removeProduct(product: CatalogProduct) {
-    setProducts((current) => current.filter((item) => item.id !== product.id))
-    notify(`${product.name} removed from this preview catalog`)
+  async function removeProduct(product: CatalogProduct) {
+    if (!window.confirm(`Remove ${product.name} from the catalog?`)) return
+    try {
+      onMutationStart()
+      await apiRequest(businessPath(businessId, `/products/${encodeURIComponent(product.id)}`), { method: 'DELETE' })
+      setProducts((current) => current.filter((item) => item.id !== product.id))
+      notify(`${product.name} removed from the catalog`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'The product could not be removed.')
+    }
   }
 
   const visibleProducts = products.filter((product) => {
@@ -949,6 +1240,7 @@ function Catalog({
           </select>
         </div>
       </div>
+      {successMessage && <p className="catalog-success-message" role="status"><CheckCircle size={16} /> {successMessage}</p>}
 
       {products.length === 0 ? (
         <section className="catalog-empty panel">
@@ -970,7 +1262,9 @@ function Catalog({
           {visibleProducts.map((product) => (
             <article className={`catalog-product panel ${!product.available ? 'catalog-product-unavailable' : ''}`} key={product.id}>
               <div className="catalog-product-image-wrap">
-                <img src={product.images[0]} alt={product.name} />
+                {product.images[0]
+                  ? <img src={product.images[0]} alt={product.name} />
+                  : <div className="catalog-image-placeholder" aria-label="Product image unavailable"><ImageSquare size={28} /></div>}
                 {product.images.length > 1 && <span className="catalog-image-count"><ImageSquare size={13} /> {product.images.length} photos</span>}
                 {!product.available && <span className="catalog-product-state">Out of stock</span>}
               </div>
@@ -979,18 +1273,17 @@ function Catalog({
                   <div>
                     <h2>{product.name}</h2>
                     <div className="catalog-product-labels">
-                      <span className="catalog-source-tag">Added in Reactant</span>
                       {product.category && <span className="catalog-category">{product.category}</span>}
                     </div>
                   </div>
-                  <strong className="catalog-price">{formatCurrency(product.price)}</strong>
+                  <strong className="catalog-price">{formatCurrency(product.price, product.currency)}</strong>
                 </div>
                 {product.description && <p className="catalog-product-description">{product.description}</p>}
                 <div className="catalog-product-meta">
                   <span>{product.stock === null ? 'Stock not tracked' : `${product.stock} in stock`}</span>
                   <button
                     className={`catalog-agent-access ${product.agentCanShare ? 'catalog-agent-enabled' : ''}`}
-                    onClick={() => toggleAgentAccess(product.id)}
+                    onClick={() => { void toggleAgentAccess(product) }}
                     aria-pressed={product.agentCanShare}
                   >
                     <Robot size={14} /> {product.agentCanShare ? 'Agent can share' : 'Hidden from agent'}
@@ -998,7 +1291,7 @@ function Catalog({
                 </div>
                 <div className="catalog-product-actions">
                   <Button variant="soft" color="gray" onClick={() => openProductForm(product)}>Edit product</Button>
-                  <button className="catalog-remove-button" onClick={() => removeProduct(product)} aria-label={`Remove ${product.name}`}><Trash size={16} /></button>
+                  <button className="catalog-remove-button" onClick={() => { void removeProduct(product) }} aria-label={`Remove ${product.name}`}><Trash size={16} /></button>
                 </div>
               </div>
             </article>
@@ -1016,7 +1309,7 @@ function Catalog({
 
             <div className="catalog-form-row">
               <div>
-                <label className="field-label" htmlFor="catalog-price">Price (USD)</label>
+                <label className="field-label" htmlFor="catalog-price">Price ({editingId ? products.find((item) => item.id === editingId)?.currency ?? 'USD' : 'USD'})</label>
                 <TextField.Root id="catalog-price" type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00" required />
               </div>
               <div>
@@ -1051,7 +1344,11 @@ function Catalog({
                   {images.map((image, index) => (
                     <div className="catalog-image-preview" key={`${image.slice(0, 40)}-${index}`}>
                       <img src={image} alt={`Product photo ${index + 1}`} />
-                      <button type="button" onClick={() => setImages((current) => current.filter((_, imageIndex) => imageIndex !== index))} aria-label={`Remove product photo ${index + 1}`}><X size={14} /></button>
+                      <button type="button" onClick={() => {
+                        setImages((current) => current.filter((_, imageIndex) => imageIndex !== index))
+                        setImageAssetIds((current) => current.filter((_, imageIndex) => imageIndex !== index))
+                        setImageFiles((current) => current.filter((_, imageIndex) => imageIndex !== index))
+                      }} aria-label={`Remove product photo ${index + 1}`}><X size={14} /></button>
                     </div>
                   ))}
                 </div>
@@ -1067,7 +1364,7 @@ function Catalog({
             <p className="form-note">Preview only. This product is not yet saved to Reactant or connected to customer channels.</p>
             <div className="dialog-actions">
               <Button type="button" variant="soft" color="gray" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button type="submit">{editingId ? 'Save changes' : 'Add to catalog'}</Button>
+              <Button type="submit" disabled={savingProduct || readingImages}>{savingProduct ? 'Saving...' : editingId ? 'Save changes' : 'Add to catalog'}</Button>
             </div>
           </form>
         </Dialog.Content>
@@ -1078,6 +1375,7 @@ function Catalog({
 
 function Inbox({
   conversations,
+  allConversations,
   selectedConversation,
   filter,
   setFilter,
@@ -1090,7 +1388,8 @@ function Inbox({
   setStatus,
 }: {
   conversations: Conversation[]
-  selectedConversation: Conversation
+  allConversations: Conversation[]
+  selectedConversation?: Conversation
   filter: 'All' | ConversationStatus
   setFilter: (filter: 'All' | ConversationStatus) => void
   setSearch: (value: string) => void
@@ -1101,9 +1400,16 @@ function Inbox({
   setReply: (value: string) => void
   setStatus: (id: string, status: ConversationStatus) => void
 }) {
+  const filterOptions = [
+    { label: 'All', count: allConversations.length },
+    { label: 'Needs reply', count: allConversations.filter((conversation) => conversation.status === 'Needs reply').length },
+    { label: 'Open', count: allConversations.filter((conversation) => conversation.status === 'Open').length },
+    { label: 'Resolved', count: allConversations.filter((conversation) => conversation.status === 'Resolved').length },
+  ] as const
+
   return (
     <div className="page-body inbox-page">
-      <PageHeading title="Inbox" description="Keep every customer conversation moving." meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Sample data</Badge>} />
+      <PageHeading title="Inbox" description="Keep every customer conversation moving." />
       <div className="inbox-layout">
         <section className="panel inbox-list-panel" aria-label="Conversations">
           <div className="inbox-list-toolbar">
@@ -1113,19 +1419,21 @@ function Inbox({
             <Button variant="soft" color="gray" aria-label={filter === 'All' ? 'Show conversations needing a reply' : 'Show all conversations'} onClick={() => setFilter(filter === 'All' ? 'Needs reply' : 'All')}><Funnel size={16} /></Button>
           </div>
           <div className="inbox-filters" role="tablist" aria-label="Filter conversations">
-            {(['All', 'Needs reply', 'Open', 'Resolved'] as const).map((item) => (
-              <button key={item} className={`inbox-filter ${filter === item ? 'inbox-filter-active' : ''}`} onClick={() => setFilter(item)} role="tab" aria-selected={filter === item}>{item}</button>
+            {filterOptions.map(({ label, count }) => (
+              <button key={label} className={`inbox-filter ${filter === label ? 'inbox-filter-active' : ''}`} onClick={() => setFilter(label)} role="tab" aria-selected={filter === label}>
+                <span>{label}</span><span className="inbox-filter-count">{count}</span>
+              </button>
             ))}
           </div>
           <div className="inbox-conversation-list">
-            {conversations.length === 0 && <div className="empty-list">No conversations match this filter.</div>}
+            {conversations.length === 0 && <div className="empty-list">{allConversations.length === 0 ? 'Conversations will appear here when customers contact your connected channels.' : 'No conversations match this filter.'}</div>}
             {conversations.map((conversation) => (
-              <button className={`inbox-conversation ${selectedConversation.id === conversation.id ? 'inbox-conversation-selected' : ''}`} key={conversation.id} onClick={() => setSelected(conversation.id)}>
+              <button className={`inbox-conversation ${selectedConversation?.id === conversation.id ? 'inbox-conversation-selected' : ''}`} key={conversation.id} onClick={() => setSelected(conversation.id)}>
                 <Avatar initials={conversation.initials} color={conversation.color} />
                 <span className="inbox-conversation-info">
                   <span className="inbox-conversation-name"><strong>{conversation.name}</strong><small>{conversation.time}</small></span>
                   <span className="inbox-conversation-preview">{conversation.preview}</span>
-                  <span className="inbox-conversation-tags"><span className="channel-tag"><TelegramLogo size={12} /> Telegram</span>{conversation.status === 'Needs reply' && <span className="needs-reply-label">Needs reply</span>}</span>
+                  <span className="inbox-conversation-tags"><span className="channel-tag"><ChatCircleDots size={12} /> {conversation.channel}</span>{conversation.status === 'Needs reply' && <span className="needs-reply-label">Needs reply</span>}</span>
                 </span>
                 {conversation.unread && <span className="unread-indicator" aria-label="Unread" />}
               </button>
@@ -1133,25 +1441,26 @@ function Inbox({
           </div>
         </section>
 
-        <section className="panel conversation-panel" aria-label={`Conversation with ${selectedConversation.name}`}>
+        <section className="panel conversation-panel" aria-label={selectedConversation ? `Conversation with ${selectedConversation.name}` : 'Conversation details'}>
+          {!selectedConversation ? (
+            <div className="empty-state"><span className="empty-state-icon"><ChatCircleDots size={24} /></span><h2>Select a conversation</h2><p>Choose a customer conversation to review its messages.</p></div>
+          ) : <>
           <div className="conversation-header">
             <div className="conversation-person">
               <Avatar initials={selectedConversation.initials} color={selectedConversation.color} />
-              <div><strong>{selectedConversation.name}</strong><span><TelegramLogo size={13} /> Telegram · {selectedConversation.id}</span></div>
+              <div><strong>{selectedConversation.name}</strong><span><ChatCircleDots size={13} /> {selectedConversation.channel} · {selectedConversation.id}</span></div>
             </div>
             <div className="conversation-header-actions">
               <Badge color={selectedConversation.status === 'Needs reply' ? 'orange' : selectedConversation.status === 'Resolved' ? 'gray' : 'green'} variant="soft">{selectedConversation.status}</Badge>
             </div>
           </div>
           <div className="conversation-context">
-            <span><ShoppingBagOpen size={15} /> 1 related order</span>
             <button onClick={() => setStatus(selectedConversation.id, selectedConversation.status === 'Resolved' ? 'Open' : 'Resolved')}>
               {selectedConversation.status === 'Resolved' ? <ArrowLeft size={14} /> : <Check size={14} />}
               {selectedConversation.status === 'Resolved' ? 'Reopen' : 'Resolve'}
             </button>
           </div>
           <div className="message-thread">
-            <p className="thread-date">Today</p>
             {selectedConversation.messages.map((message, index) => (
               <div className={`message-row message-${message.from}`} key={`${selectedConversation.id}-${index}`}>
                 {message.from === 'customer' && <Avatar initials={selectedConversation.initials} color={selectedConversation.color} small />}
@@ -1165,8 +1474,9 @@ function Inbox({
           </div>
           <form className="reply-composer" onSubmit={sendReply}>
             <textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Write a reply..." aria-label="Write a reply" rows={2} />
-            <div className="composer-footer"><span>Replying as Ada · Preview only</span><Button type="submit" disabled={!reply.trim()}><PaperPlaneTilt size={15} /> Send reply</Button></div>
+            <div className="composer-footer"><span>Replying as a workspace member</span><Button type="submit" disabled={!reply.trim()}><PaperPlaneTilt size={15} /> Send reply</Button></div>
           </form>
+          </>}
         </section>
       </div>
     </div>
@@ -1181,7 +1491,6 @@ function Orders({
   search,
   setSearch,
   selectOrder,
-  createOrder,
 }: {
   orders: Order[]
   selectedOrder?: Order
@@ -1190,23 +1499,10 @@ function Orders({
   search: string
   setSearch: (value: string) => void
   selectOrder: (id: string | null) => void
-  createOrder: (customer: string, item: string, total: number) => void
 }) {
-  const [createOrderOpen, setCreateOrderOpen] = useState(false)
-
-  function submitOrder(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const formData = new FormData(event.currentTarget)
-    const customer = String(formData.get('customer') ?? '')
-    const item = String(formData.get('item') ?? '')
-    const total = Number(formData.get('total'))
-    createOrder(customer, item, total)
-    setCreateOrderOpen(false)
-  }
-
   return (
     <div className="page-body orders-page">
-      <PageHeading title="Orders" description="Track orders and payment status in one place." meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Sample data</Badge>} action={<Button onClick={() => setCreateOrderOpen(true)}><Plus size={17} /> Create order</Button>} />
+      <PageHeading title="Orders" description="Track orders and payment status in one place." />
       <section className="panel orders-table-panel">
         <div className="table-toolbar">
           <div className="order-tabs" role="tablist" aria-label="Filter orders">
@@ -1226,7 +1522,7 @@ function Orders({
                   <td><span className="table-customer"><Avatar initials={order.initials} color={colorForInitials(order.initials)} small />{order.customer}</span></td>
                   <td className="table-item-cell">{order.item}</td>
                   <td className="muted-cell">{order.date}</td>
-                  <td className="total-cell">{formatCurrency(order.total)}</td>
+                  <td className="total-cell">{formatCurrency(order.total, order.currency)}</td>
                   <td><OrderStatus status={order.status} /></td>
                   <td><button className="icon-button row-more" aria-label={`More actions for ${order.id}`} onClick={(event) => { event.stopPropagation(); selectOrder(order.id) }}><DotsThree size={20} /></button></td>
                 </tr>
@@ -1235,34 +1531,16 @@ function Orders({
             </tbody>
           </table>
         </div>
-        <div className="table-pagination"><span>Showing {orders.length} sample orders</span><div><Button size="1" variant="soft" color="gray" disabled><ArrowLeft size={14} /> Previous</Button><Button size="1" variant="soft" color="gray" disabled>Next <ArrowRight size={14} /></Button></div></div>
+        <div className="table-pagination"><span>{orders.length} orders loaded</span></div>
       </section>
-      <Dialog.Root open={createOrderOpen} onOpenChange={setCreateOrderOpen}>
-        <Dialog.Content className="dialog-content">
-          <Dialog.Title className="dialog-title">Create a sample order</Dialog.Title>
-          <Dialog.Description className="dialog-description">Add an order to the local preview. It will not be sent to a store or payment provider.</Dialog.Description>
-          <form className="connection-form" onSubmit={submitOrder}>
-            <label className="field-label" htmlFor="order-customer">Customer name</label>
-            <TextField.Root id="order-customer" name="customer" placeholder="Customer name" required />
-            <label className="field-label" htmlFor="order-item">Product or item</label>
-            <TextField.Root id="order-item" name="item" placeholder="Product name" required />
-            <label className="field-label" htmlFor="order-total">Order total (USD)</label>
-            <TextField.Root id="order-total" name="total" type="number" min="1" step="0.01" placeholder="0.00" required />
-            <div className="dialog-actions">
-              <Button type="button" variant="soft" color="gray" onClick={() => setCreateOrderOpen(false)}>Cancel</Button>
-              <Button type="submit">Create sample order</Button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Root>
       {selectedOrder && (
         <div className="order-detail-backdrop" onClick={() => selectOrder(null)}>
           <aside className="order-detail-drawer" onClick={(event) => event.stopPropagation()} aria-label={`Order details for ${selectedOrder.id}`}>
             <div className="drawer-heading"><div><span className="drawer-eyebrow">Order details</span><h2>{selectedOrder.id}</h2></div><button className="icon-button" aria-label="Close order details" onClick={() => selectOrder(null)}><X size={19} /></button></div>
             <OrderStatus status={selectedOrder.status} />
             <div className="detail-section"><h3>Customer</h3><div className="detail-customer"><Avatar initials={selectedOrder.initials} color={colorForInitials(selectedOrder.initials)} /><span><strong>{selectedOrder.customer}</strong><small>{selectedOrder.email}</small></span></div></div>
-            <div className="detail-section"><h3>Items</h3><div className="detail-item"><span className="order-icon"><ShoppingBagOpen size={18} /></span><span><strong>{selectedOrder.item}</strong><small>Quantity 1</small></span><strong>{formatCurrency(selectedOrder.total)}</strong></div></div>
-            <div className="detail-section"><h3>Payment summary</h3><div className="summary-row"><span>Subtotal</span><strong>{formatCurrency(selectedOrder.total)}</strong></div><div className="summary-row"><span>Delivery</span><strong>Calculated at checkout</strong></div><div className="summary-row summary-total"><span>Total</span><strong>{formatCurrency(selectedOrder.total)}</strong></div></div>
+            <div className="detail-section"><h3>Items</h3><div className="detail-item"><span className="order-icon"><ShoppingBagOpen size={18} /></span><span><strong>{selectedOrder.item}</strong></span><strong>{formatCurrency(selectedOrder.total, selectedOrder.currency)}</strong></div></div>
+            <div className="detail-section"><h3>Payment summary</h3><div className="summary-row"><span>Order amount</span><strong>{formatCurrency(selectedOrder.total, selectedOrder.currency)}</strong></div></div>
             <div className="detail-section"><h3>Timeline</h3><div className="order-timeline"><span className="timeline-icon"><CheckCircle size={16} /></span><span><strong>Order created</strong><small>{selectedOrder.date}</small></span></div></div>
             <Button variant="soft" color="gray" className="drawer-action" onClick={() => selectOrder(null)}>Close details</Button>
           </aside>
@@ -1272,51 +1550,37 @@ function Orders({
   )
 }
 
-function Approvals({ orders, decide, resolveHandoff, pendingCount }: { orders: Order[]; decide: (id: string, decision: 'approve' | 'reject') => void; resolveHandoff: () => void; pendingCount: number }) {
-  const pendingOrder = orders.find((order) => order.status === 'Pending payment')
-  const [resolvedRequests, setResolvedRequests] = useState<string[]>([])
-
-  function resolveRequest(request: string) {
-    setResolvedRequests((items) => [...items, request])
-  }
-
+function Approvals({ approvals, decide }: { approvals: Approval[]; decide: (id: string, decision: 'approved' | 'rejected') => Promise<void> }) {
+  const pending = approvals.filter((item) => item.status === 'pending')
   return (
     <div className="page-body approvals-page">
-      <PageHeading title="Approvals" description="Review sensitive actions before your agent proceeds." meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Sample data</Badge>} />
+      <PageHeading title="Approvals" description="Review sensitive actions before your agent proceeds." />
       <div className="approvals-summary">
         <div className="approval-summary-icon"><ShieldCheck size={20} /></div>
-        <div><strong>{pendingCount === 0 ? 'You’re all caught up' : `${pendingCount} ${pendingCount === 1 ? 'action needs' : 'actions need'} your review`}</strong><p>Orders and other sensitive actions wait here when approval is required.</p></div>
+        <div><strong>{pending.length === 0 ? 'You’re all caught up' : `${pending.length} ${pending.length === 1 ? 'action needs' : 'actions need'} your review`}</strong><p>Orders and other sensitive actions wait here when approval is required.</p></div>
       </div>
-      {pendingCount > 0 && (
-        <div className={`approval-list ${pendingCount === 1 ? 'approval-list-single' : ''}`}>
-          {!resolvedRequests.includes('order') && (
-          <ApprovalCard
-            title="Approve order creation"
-            subtitle="The agent prepared an order after a customer confirmed their cart."
-            customer="Ama Mensah"
-            initials="AM"
-            amount={formatCurrency(620)}
-            time="Requested 12 minutes ago"
-            onApprove={() => { if (pendingOrder) decide(pendingOrder.id, 'approve'); resolveRequest('order') }}
-            onReject={() => { if (pendingOrder) decide(pendingOrder.id, 'reject'); resolveRequest('order') }}
-          />
-          )}
-          {!resolvedRequests.includes('handoff') && (
-          <ApprovalCard
-            title="Confirm a customer handoff"
-            subtitle="A delivery question needs a staff member to verify the latest tracking details."
-            customer="Esi Owusu"
-            initials="EO"
-            amount="Conversation C-2046"
-            time="Requested 42 minutes ago"
-            onApprove={() => { resolveHandoff(); resolveRequest('handoff') }}
-            onReject={() => { resolveHandoff(); resolveRequest('handoff') }}
-          />
-          )}
+      {pending.length > 0 && (
+        <div className={`approval-list ${pending.length === 1 ? 'approval-list-single' : ''}`}>
+          {pending.map((approval) => {
+            const details = approval.impact.summary
+            const customer = approval.impact.customer_name
+            const amount = approval.impact.amount_minor
+            const currency = approval.impact.currency
+            return <ApprovalCard
+              key={approval.id}
+              title={approval.action_type.replaceAll('_', ' ')}
+              subtitle={typeof details === 'string' ? details : 'The Business Agent is waiting for an authorized team member to review this action.'}
+              customer={typeof customer === 'string' ? customer : 'Business Agent'}
+              initials={nameInitials(typeof customer === 'string' ? customer : 'Business Agent')}
+              amount={typeof amount === 'number' && typeof currency === 'string' ? formatCurrency(amount / 100, currency) : `Request ${approval.id}`}
+              time={`Requested ${displayTime(approval.created_at)}`}
+              onApprove={() => void decide(approval.id, 'approved')}
+              onReject={() => void decide(approval.id, 'rejected')}
+            />
+          })}
         </div>
       )}
-      {pendingCount === 0 && <div className="empty-state"><span className="empty-state-icon"><CheckCircle size={25} /></span><h2>No pending approvals</h2><p>New requests will appear here when an action needs your review.</p></div>}
-      <p className="preview-footnote"><WarningCircle size={15} /> Approval decisions here only update sample data in this preview.</p>
+      {pending.length === 0 && <div className="empty-state"><span className="empty-state-icon"><CheckCircle size={25} /></span><h2>No pending approvals</h2><p>New requests will appear here when an action needs your review.</p></div>}
     </div>
   )
 }
@@ -1333,79 +1597,291 @@ function ApprovalCard({ title, subtitle, customer, initials, amount, time, onApp
   )
 }
 
-function Integrations({ connections, setConnectionDialog }: { connections: Record<Connection, boolean>; setConnectionDialog: (connection: Connection) => void }) {
-  const integrations: { name: Connection; description: string; icon: Icon; category: string }[] = [
-    { name: 'WooCommerce', description: 'Sync your products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
-    { name: 'Telegram', description: 'Talk to customers through your business Telegram bot.', icon: TelegramLogo, category: 'Messaging' },
-    { name: 'PayPal', description: 'Offer secure customer checkout and verify payments.', icon: CreditCard, category: 'Payments' },
-    { name: 'Shopify', description: 'Bring your products and order activity into Reactant.', icon: ShoppingBagOpen, category: 'Store' },
-    { name: 'WhatsApp', description: 'Meet customers on the messaging app they already use.', icon: ChatCircleDots, category: 'Messaging' },
+function Integrations({ businessId, integrations, setIntegrations, notify }: {
+  businessId: string
+  integrations: Integration[]
+  setIntegrations: React.Dispatch<React.SetStateAction<Integration[]>>
+  notify: (message: string) => void
+}) {
+  const [dialogProvider, setDialogProvider] = useState<Connection | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
+    { provider: 'WooCommerce', key: 'woocommerce', description: 'Sync products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
+    { provider: 'Telegram', key: 'telegram', description: 'Receive customer messages through your Telegram bot.', icon: TelegramLogo, category: 'Messaging' },
+    { provider: 'PayPal', key: 'paypal', description: 'Create customer checkout sessions and verify payments.', icon: CreditCard, category: 'Payments' },
   ]
+
+  async function refreshIntegration(integrationId: string) {
+    const updated = await apiRequest<Integration>(businessPath(businessId, `/integrations/${integrationId}`))
+    setIntegrations((items) => items.map((item) => item.id === integrationId ? updated : item))
+    return updated
+  }
+
+  async function createConnection(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!dialogProvider) return
+    const form = event.currentTarget
+    const formData = new FormData(form)
+    const credentials = dialogProvider === 'WooCommerce'
+      ? {
+          store_url: String(formData.get('store_url') ?? '').trim(),
+          consumer_key: String(formData.get('consumer_key') ?? ''),
+          consumer_secret: String(formData.get('consumer_secret') ?? ''),
+          webhook_secret: createWebhookSecret(),
+        }
+      : dialogProvider === 'Telegram'
+        ? { bot_token: String(formData.get('bot_token') ?? ''), webhook_secret: createWebhookSecret() }
+        : {
+            consumer_key: String(formData.get('paypal_client_id') ?? ''),
+            consumer_secret: String(formData.get('paypal_client_secret') ?? ''),
+            webhook_id: String(formData.get('paypal_webhook_id') ?? ''),
+          }
+    setSaving(true)
+    setError('')
+    try {
+      const created = await apiRequest<Integration>(businessPath(businessId, '/integrations'), {
+        method: 'POST',
+        body: JSON.stringify({ provider: dialogProvider.toLowerCase(), credentials }),
+      })
+      setIntegrations((items) => [created, ...items.filter((item) => item.id !== created.id)])
+      form.reset()
+      setDialogProvider(null)
+      notify(`${dialogProvider} credentials were submitted. Verify the connection before relying on it.`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The integration could not be connected.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function testConnection(integration: Integration) {
+    setSaving(true)
+    setError('')
+    try {
+      await apiRequest(businessPath(businessId, `/integrations/${integration.id}/test`), { method: 'POST' })
+      await refreshIntegration(integration.id)
+      notify(`${integration.provider} connection test completed.`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The connection test failed.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function syncConnection(integration: Integration) {
+    setSaving(true)
+    setError('')
+    try {
+      await apiRequest(businessPath(businessId, `/integrations/${integration.id}/sync`), { method: 'POST' })
+      await refreshIntegration(integration.id)
+      notify(`${integration.provider} sync was queued.`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The sync could not be started.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function disconnect(integration: Integration) {
+    if (!window.confirm(`Disconnect ${integration.provider}? Reactant will stop syncing this account.`)) return
+    setSaving(true)
+    setError('')
+    try {
+      await apiRequest(businessPath(businessId, `/integrations/${integration.id}`), { method: 'DELETE' })
+      setIntegrations((items) => items.filter((item) => item.id !== integration.id))
+      notify(`${integration.provider} was disconnected.`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The integration could not be disconnected.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="page-body integrations-page">
-      <PageHeading title="Integrations" description="Connect the tools your business already uses." meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Sample data</Badge>} action={<Button onClick={() => setConnectionDialog('WooCommerce')}><Plus size={17} /> Add integration</Button>} />
+      <PageHeading title="Integrations" description="Connect and manage the services your workspace uses." />
       <div className="integration-callout"><span className="callout-icon"><ShieldCheck size={20} /></span><span><strong>Your accounts stay yours.</strong><small>Connections use limited access, and you can disconnect them at any time.</small></span></div>
       <div className="integration-grid">
-        {integrations.map((item) => {
-          const IconComponent = item.icon
-          const connected = connections[item.name]
+        {providers.map((provider) => {
+          const IconComponent = provider.icon
+          const connection = integrations.find((item) => item.provider === provider.key && item.status !== 'disconnected')
+          const connected = connection?.status === 'connected'
           return (
-            <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={item.name}>
-              <div className="integration-card-top"><span className={`integration-icon integration-icon-${item.name.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{item.category}</Badge></div>
-              <h2>{item.name}</h2>
-              <p>{item.description}</p>
-              {connected && <div className="integration-status"><CheckCircle size={15} weight="fill" /><span>Connected</span>{item.name === 'WooCommerce' && <small>Last synced today</small>}</div>}
+            <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={provider.key}>
+              <div className="integration-card-top"><span className={`integration-icon integration-icon-${provider.provider.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{provider.category}</Badge></div>
+              <h2>{provider.provider}</h2>
+              <p>{provider.description}</p>
+              {connection && (
+                <div className="integration-status">
+                  {connected ? <CheckCircle size={15} weight="fill" /> : <WarningCircle size={15} />}
+                  <span>{connection.status.replaceAll('_', ' ')}</span>
+                  {connection.last_success_at && <small>Last synced {displayTime(connection.last_success_at)}</small>}
+                  {connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
+                </div>
+              )}
               <div className="integration-card-actions">
-                {connected ? <Button variant="soft" color="gray" onClick={() => setConnectionDialog(item.name)}>Manage</Button> : <Button onClick={() => setConnectionDialog(item.name)}>Connect</Button>}
+                {connection
+                  ? <>
+                      <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>
+                      {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
+                      <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>
+                    </>
+                  : provider.key === 'paypal'
+                    ? <Button onClick={() => { setError(''); setDialogProvider('PayPal') }}>Connect</Button>
+                    : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>Connect</Button>}
               </div>
             </article>
           )
         })}
       </div>
-      <p className="preview-footnote"><WarningCircle size={15} /> Connecting here changes preview state only. It will not authorize an external account.</p>
+      {error && <p className="api-error" role="alert">{error}</p>}
+      <Dialog.Root open={dialogProvider !== null} onOpenChange={(open) => { if (!open && !saving) setDialogProvider(null) }}>
+        <Dialog.Content className="dialog-content">
+          <Dialog.Title className="dialog-title">Connect {dialogProvider}</Dialog.Title>
+          <Dialog.Description className="dialog-description">
+            {dialogProvider === 'WooCommerce'
+              ? 'Use an HTTPS store URL and WooCommerce REST API keys with only the permissions Reactant needs.'
+              : dialogProvider === 'Telegram'
+                ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
+                : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
+          </Dialog.Description>
+          <form className="connection-form" onSubmit={(event) => void createConnection(event)}>
+            {dialogProvider === 'WooCommerce' ? (
+              <>
+                <label className="field-label" htmlFor="connection-store-url">Store URL</label>
+                <TextField.Root id="connection-store-url" name="store_url" type="url" placeholder="https://yourstore.com" pattern="https://.*" required />
+                <label className="field-label" htmlFor="connection-consumer-key">REST API consumer key</label>
+                <TextField.Root id="connection-consumer-key" name="consumer_key" type="password" autoComplete="off" required />
+                <label className="field-label" htmlFor="connection-consumer-secret">REST API consumer secret</label>
+                <TextField.Root id="connection-consumer-secret" name="consumer_secret" type="password" autoComplete="off" required />
+                <p className="form-note">Create the keys in WooCommerce under Settings, Advanced, REST API. Credentials are sent only to Reactant over HTTPS.</p>
+              </>
+            ) : dialogProvider === 'Telegram' ? (
+              <>
+                <label className="field-label" htmlFor="connection-bot-token">Telegram bot token</label>
+                <TextField.Root id="connection-bot-token" name="bot_token" type="password" autoComplete="off" required />
+                <p className="form-note">Create a bot with @BotFather. Reactant configures the webhook; never share this token with customers.</p>
+              </>
+            ) : (
+              <>
+                <label className="field-label" htmlFor="paypal-client-id">PayPal REST app client ID</label>
+                <TextField.Root id="paypal-client-id" name="paypal_client_id" type="password" autoComplete="off" required />
+                <label className="field-label" htmlFor="paypal-client-secret">PayPal REST app secret</label>
+                <TextField.Root id="paypal-client-secret" name="paypal_client_secret" type="password" autoComplete="off" required />
+                <label className="field-label" htmlFor="paypal-webhook-id">PayPal webhook ID</label>
+                <TextField.Root id="paypal-webhook-id" name="paypal_webhook_id" autoComplete="off" required />
+                <p className="form-note">Create an app and webhook in PayPal Developer. Reactant never receives permission to access your balance or move funds.</p>
+              </>
+            )}
+            {error && <p className="api-error" role="alert">{error}</p>}
+            <div className="dialog-actions">
+              <Button type="button" variant="soft" color="gray" disabled={saving} onClick={() => setDialogProvider(null)}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Connecting...' : 'Save credentials'}</Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Root>
     </div>
   )
 }
 
-function AgentSettings({ enabled, setEnabled, notify, paymentConnected }: { enabled: boolean; setEnabled: (enabled: boolean) => void; notify: (message: string) => void; paymentConnected: boolean }) {
-  const [productAnswers, setProductAnswers] = useState(true)
-  const [approvalRequired, setApprovalRequired] = useState(true)
-  const [productImages, setProductImages] = useState(true)
-  const [cartOrders, setCartOrders] = useState(true)
-  const [checkoutEnabled, setCheckoutEnabled] = useState(false)
-  const [approvalThreshold, setApprovalThreshold] = useState('')
+function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, paymentConnected, integrations }: {
+  businessId: string
+  config: AgentConfig | null
+  etag: string | null
+  setConfig: React.Dispatch<React.SetStateAction<AgentConfig | null>>
+  setEtag: (etag: string | null) => void
+  notify: (message: string) => void
+  paymentConnected: boolean
+  integrations: Integration[]
+}) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function saveAgent() {
+    if (!config || !etag) {
+      setError('Agent settings are not ready to save. Reload the workspace and try again.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const { data, headers } = await apiRequestWithHeaders<AgentConfig>(businessPath(businessId, '/agent'), {
+        method: 'PATCH',
+        headers: { 'If-Match': etag },
+        body: JSON.stringify({
+          enabled: config.enabled,
+          business_context: config.business_context,
+          tone: config.tone,
+          handoff_rule: config.handoff_rule,
+          permissions: config.permissions,
+          approval_policy: {
+            ...config.approval_policy,
+              checkout_threshold_minor: config.approval_policy.checkout_threshold_minor,
+          },
+        }),
+      })
+      setConfig(data)
+      setEtag(headers.get('ETag'))
+      notify('Business Agent settings saved.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Agent settings could not be saved.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const updateConfig = (update: Partial<AgentConfig>) => setConfig((current) => current ? { ...current, ...update } : current)
+  const permissionRows: { key: keyof AgentConfig['permissions']; title: string; description: string; blocked?: boolean }[] = [
+    { key: 'answer_product_questions', title: 'Answer product questions', description: 'Use active products from your connected store and catalog.' },
+    { key: 'share_product_images', title: 'Share product images', description: 'Send product photos to customers through supported channels.' },
+    { key: 'create_carts_and_orders', title: 'Build carts and prepare orders', description: 'Validate product, quantity, price, and availability before order creation.' },
+    { key: 'create_paypal_checkout', title: 'Create PayPal checkout links', description: paymentConnected ? 'Create customer checkout sessions. The agent cannot access balances or send payouts.' : 'Connect PayPal before enabling customer checkout links.', blocked: !paymentConnected },
+  ]
+
+  if (!config) {
+    return <div className="page-body"><PageHeading title="Business agent" description="Agent configuration is not available from the API yet." /></div>
+  }
+
   return (
     <div className="page-body agent-page">
-      <PageHeading title="Business agent" description="Set how your agent speaks and what it can do." meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Sample data</Badge>} action={<Button variant="soft" color="gray" onClick={() => notify('Settings saved in this preview')}><Check size={16} /> Save changes</Button>} />
+      <PageHeading title="Business agent" description="Set how your agent speaks and which business actions it is allowed to take." action={<Button onClick={() => void saveAgent()} disabled={saving}>{saving ? 'Saving...' : 'Save changes'}</Button>} />
+      {error && <p className="api-error" role="alert">{error}</p>}
       <div className="agent-page-layout">
         <div className="agent-settings-column">
           <section className="panel agent-control-panel">
-            <div className="agent-control-heading"><div className="agent-avatar"><Robot size={23} weight="duotone" /></div><div><h2>Customer support agent</h2><p>Shared across your connected channels</p></div><div className="agent-toggle"><span>{enabled ? 'Active' : 'Paused'}</span><Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enable business agent" /></div></div>
-            <div className={`agent-state-note ${enabled ? '' : 'agent-paused-note'}`}><span className="agent-indicator is-on" /><span>{enabled ? 'Your agent can respond to customer messages.' : 'Your agent is paused. New messages will wait in the inbox.'}</span></div>
+            <div className="agent-control-heading"><div className="agent-avatar"><Robot size={23} weight="duotone" /></div><div><h2>Customer support agent</h2><p>Shared across your connected channels</p></div><div className="agent-toggle"><span>{config.enabled ? 'Active' : 'Paused'}</span><Switch checked={config.enabled} onCheckedChange={(enabled) => updateConfig({ enabled })} aria-label="Enable business agent" /></div></div>
+            <div className={`agent-state-note ${config.enabled ? '' : 'agent-paused-note'}`}><span className={`agent-indicator ${config.enabled ? 'is-on' : 'is-off'}`} /><span>{config.enabled ? `Agent status: ${config.status}. Changes take effect after saving.` : 'Your agent is paused. Save to apply this change.'}</span></div>
           </section>
           <section className="panel settings-section">
-            <div className="settings-section-heading"><h2>Business profile</h2><p>Give the agent the context it needs to represent your business.</p></div>
+            <div className="settings-section-heading"><h2>Business profile</h2><p>Give the agent accurate context to represent your business.</p></div>
             <label className="field-label" htmlFor="business-description">About your business</label>
-            <textarea id="business-description" className="settings-textarea" defaultValue="Olive & Oak Studio makes thoughtfully sourced home goods, ceramics, and textiles. We are based in Accra and ship across Ghana." rows={3} />
+            <textarea id="business-description" className="settings-textarea" value={config.business_context} onChange={(event) => updateConfig({ business_context: event.target.value })} rows={4} maxLength={20000} />
             <div className="settings-two-column">
-              <div><label className="field-label" htmlFor="agent-tone">Tone of voice</label><select className="settings-select" id="agent-tone" defaultValue="Warm and helpful"><option>Warm and helpful</option><option>Direct and concise</option><option>Professional</option></select></div>
-              <div><label className="field-label" htmlFor="handoff-rule">Human handoff</label><select className="settings-select" id="handoff-rule" defaultValue="When the agent is unsure"><option>When the agent is unsure</option><option>When a customer asks</option><option>Always offer a person</option></select></div>
+              <div><label className="field-label" htmlFor="agent-tone">Tone of voice</label><select className="settings-select" id="agent-tone" value={config.tone} onChange={(event) => updateConfig({ tone: event.target.value })}><option value="warm_helpful">Warm and helpful</option><option value="direct_concise">Direct and concise</option><option value="professional">Professional</option></select></div>
+              <div><label className="field-label" htmlFor="handoff-rule">Human handoff</label><select className="settings-select" id="handoff-rule" value={config.handoff_rule} onChange={(event) => updateConfig({ handoff_rule: event.target.value })}><option value="when_uncertain">When the agent is unsure</option><option value="when_customer_asks">When a customer asks</option><option value="always_offer_human">Always offer a person</option></select></div>
             </div>
           </section>
           <section className="panel settings-section">
-            <div className="settings-section-heading"><h2>What your agent can do</h2><p>Business actions are checked against your policies before they run.</p></div>
+            <div className="settings-section-heading"><h2>What your agent can do</h2><p>Backend policy checks remain authoritative for every action.</p></div>
             <div className="permission-list">
-              <PermissionRow title="Answer product questions" description="Use store-synced or manually added catalog details." checked={productAnswers} onChange={setProductAnswers} />
-              <PermissionRow title="Share product images" description="Send photos from your catalog or connected store." enabled checked={productImages} onChange={setProductImages} />
-              <PermissionRow title="Build carts and prepare orders" description="Validate product, quantity, and price before checkout." checked={cartOrders} onChange={setCartOrders} />
-              <PermissionRow title="Create PayPal checkout links" description={paymentConnected ? 'Create a customer checkout link for a verified order. This never sends money from your account.' : 'Connect PayPal before enabling customer checkout links.'} checked={checkoutEnabled} onChange={paymentConnected ? setCheckoutEnabled : undefined} disabled={!paymentConnected} />
-              <PermissionRow title="Require approval for sensitive actions" description="Review order actions before the agent proceeds." checked={approvalRequired} onChange={setApprovalRequired} />
+              {permissionRows.map((row) => (
+                <PermissionRow key={row.key} title={row.title} description={row.description} checked={config.permissions[row.key]} disabled={row.blocked} onChange={(checked) => updateConfig({ permissions: { ...config.permissions, [row.key]: checked } })} />
+              ))}
+              <PermissionRow title="Require approval for checkout" description="Hold checkout creation until an authorized team member approves it." checked={config.approval_policy.require_approval_for_checkout} onChange={(checked) => updateConfig({ approval_policy: { ...config.approval_policy, require_approval_for_checkout: checked } })} />
             </div>
-            {approvalRequired && (
+            {config.approval_policy.require_approval_for_checkout && (
               <div className="approval-threshold">
-                <label className="field-label" htmlFor="checkout-threshold">Require approval for checkout amounts above</label>
-                <div className="threshold-input-row"><span>$</span><input id="checkout-threshold" type="number" min="0" value={approvalThreshold} onChange={(event) => setApprovalThreshold(event.target.value)} placeholder="Every checkout" aria-describedby="checkout-threshold-help" /></div>
-                <small id="checkout-threshold-help">Leave blank to require approval for every checkout. Order totals are revalidated before a link is created.</small>
+                <label className="field-label" htmlFor="checkout-threshold">Require approval above (USD)</label>
+                <div className="threshold-input-row"><span>$</span><input id="checkout-threshold" type="number" min="0" step="0.01" value={config.approval_policy.checkout_threshold_minor === null ? '' : (config.approval_policy.checkout_threshold_minor / 100).toString()} onChange={(event) => {
+                  const rawValue = event.target.value
+                  const amount = rawValue.trim() === '' ? null : Number(rawValue)
+                  if (amount === null || (Number.isFinite(amount) && amount >= 0)) {
+                    updateConfig({ approval_policy: { ...config.approval_policy, checkout_threshold_minor: amount === null ? null : Math.round(amount * 100) } })
+                  }
+                }} placeholder="Every checkout" aria-describedby="checkout-threshold-help" /></div>
+                <small id="checkout-threshold-help">Leave blank to require approval for every checkout.</small>
               </div>
             )}
           </section>
@@ -1413,92 +1889,120 @@ function AgentSettings({ enabled, setEnabled, notify, paymentConnected }: { enab
         <aside className="agent-settings-aside">
           <section className="panel agent-summary-panel">
             <h2>Connected channels</h2>
-            <div className="connected-channel-row"><TelegramLogo size={18} /><span>Telegram</span><Badge color="green" variant="soft">Ready</Badge></div>
-            <div className="connected-channel-row"><Storefront size={18} /><span>WooCommerce</span><Badge color="green" variant="soft">Ready</Badge></div>
-            <div className="connected-channel-row"><CreditCard size={18} /><span>PayPal</span><Badge color={paymentConnected ? 'green' : 'gray'} variant="soft">{paymentConnected ? 'Ready' : 'Not connected'}</Badge></div>
-            <button className="panel-footer-link" onClick={() => notify('Channel management is available in Integrations')}>Manage connections <ArrowRight size={15} /></button>
+            {[
+              { provider: 'telegram', title: 'Telegram', icon: TelegramLogo },
+              { provider: 'woocommerce', title: 'WooCommerce', icon: Storefront },
+              { provider: 'paypal', title: 'PayPal', icon: CreditCard },
+            ].map((channel) => {
+              const status = integrations.find((item) => item.provider === channel.provider)?.status
+              const IconComponent = channel.icon
+              return <div className="connected-channel-row" key={channel.provider}><IconComponent size={18} /><span>{channel.title}</span><Badge color={status === 'connected' ? 'green' : 'gray'} variant="soft">{status ?? 'Not connected'}</Badge></div>
+            })}
           </section>
           <section className="panel agent-guidelines-panel">
-            <span className="guideline-icon"><ShieldCheck size={19} /></span><h2>Built to be careful</h2><p>Your agent uses verified business data and asks for help when it cannot confirm an answer.</p>
-            <button className="text-link" onClick={() => notify('Safety guidelines opened in this preview')}>View safety guidelines <ArrowUpRight size={14} /></button>
+            <span className="guideline-icon"><ShieldCheck size={19} /></span><h2>Built to be careful</h2><p>Checkout permissions do not bypass approval policy, current stock, price, or payment verification.</p>
+            <button className="text-link" onClick={() => notify('Safety checks are enforced by the Reactant API before an action runs.')}>How permissions work <ArrowUpRight size={14} /></button>
           </section>
         </aside>
       </div>
-      <p className="preview-footnote"><WarningCircle size={15} /> Agent settings are saved for this preview only.</p>
     </div>
   )
 }
 
-type OwnerAssistantMessage = {
-  id: string
-  from: 'agent' | 'owner'
-  text: string
-  time: string
-  approval?: {
-    orderId: string
-    amount: string
-    status: 'pending' | 'approved' | 'declined'
-  }
-}
-
-const initialOwnerAssistantMessages: OwnerAssistantMessage[] = [
-  {
-    id: 'owner-msg-1',
-    from: 'agent',
-    text: 'I can answer product questions and prepare orders from your synced store data. I will check with you when a request needs a decision.',
-    time: '10:14 AM',
-  },
-  {
-    id: 'owner-msg-2',
-    from: 'owner',
-    text: 'Please ask me before promising same-day delivery. Our cutoff can change.',
-    time: '10:17 AM',
-  },
-  {
-    id: 'owner-msg-3',
-    from: 'agent',
-    text: 'Understood. A customer is ready to order the Ceramic Pour-over Set. Stock and price are verified. May I prepare a PayPal checkout link?',
-    time: '10:22 AM',
-    approval: { orderId: 'RA-2085', amount: formatCurrency(620), status: 'pending' },
-  },
-]
-
-function OwnerAssistant({ notify, resolveApproval }: { notify: (message: string) => void; resolveApproval: () => void }) {
-  const [messages, setMessages] = useState(initialOwnerAssistantMessages)
+function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { businessId: string; notify: (message: string) => void; decideApproval: (id: string, decision: 'approved' | 'rejected') => Promise<void>; approvals: Approval[] }) {
+  const [messages, setMessages] = useState<OwnerMessage[] | null>(null)
   const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+  const [runtimeStatus, setRuntimeStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading')
+  const [runtimeReason, setRuntimeReason] = useState('')
+  const [pendingRuns, setPendingRuns] = useState<string[]>([])
 
-  function sendOwnerMessage(event: React.FormEvent<HTMLFormElement>) {
+  const loadMessages = useCallback(async () => {
+    try {
+      const thread = await apiRequest<{ thread: { id: string }; messages: OwnerMessage[] }>(businessPath(businessId, '/owner-assistant/thread'))
+      setError('')
+      setMessages([...thread.messages].reverse())
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The private agent thread could not be loaded.')
+    }
+  }, [businessId])
+
+  useEffect(() => { void loadMessages() }, [loadMessages])
+
+  useEffect(() => {
+    let active = true
+    void apiRequest<{ available: boolean; reason: string }>(businessPath(businessId, '/owner-assistant/status'))
+      .then((status) => {
+        if (!active) return
+        setRuntimeStatus(status.available ? 'ready' : 'unavailable')
+        setRuntimeReason(status.reason)
+      })
+      .catch(() => { if (active) setRuntimeStatus('unavailable') })
+    return () => { active = false }
+  }, [businessId])
+
+  useEffect(() => {
+    if (pendingRuns.length === 0) return
+    const timer = window.setInterval(() => {
+      void Promise.all(pendingRuns.map(async (runId) => {
+        const run = await apiRequest<{ status: 'queued' | 'running' | 'succeeded' | 'failed'; error_code: string | null }>(
+          businessPath(businessId, `/owner-assistant/runs/${runId}`),
+        )
+        if (run.status === 'succeeded') {
+          await loadMessages()
+          return runId
+        }
+        if (run.status === 'failed') {
+          setError(run.error_code ? `The agent could not complete the request (${run.error_code}).` : 'The agent could not complete the request.')
+          return runId
+        }
+        return null
+      })).then((completed) => {
+        const finished = new Set(completed.filter((runId): runId is string => runId !== null))
+        if (finished.size > 0) setPendingRuns((runs) => runs.filter((runId) => !finished.has(runId)))
+      }).catch(() => {
+        setError('The agent status could not be refreshed. The message remains queued.')
+      })
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [businessId, loadMessages, pendingRuns])
+
+  async function sendOwnerMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const text = draft.trim()
-    if (!text) return
-    setMessages((items) => [...items, {
-      id: `owner-msg-${Date.now()}`,
-      from: 'owner',
-      text,
-      time: 'Just now',
-    }])
-    setDraft('')
-    notify('Message added to this preview. It was not sent to an agent service.')
+    if (!text || sending) return
+    const clientMessageId = newIdempotencyKey()
+    setSending(true)
+    setError('')
+    try {
+      const accepted = await apiRequest<{ message: OwnerMessage; agent_run_id: string; agent_run_status: 'queued' | 'running' }>(businessPath(businessId, '/owner-assistant/messages'), {
+        method: 'POST',
+        headers: { 'Idempotency-Key': clientMessageId },
+        body: JSON.stringify({ text, client_message_id: clientMessageId }),
+      })
+      setMessages((items) => [...(items ?? []), accepted.message])
+      setPendingRuns((runs) => [...runs, accepted.agent_run_id])
+      setDraft('')
+      notify('Message queued for the Business Agent.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Your message could not be sent.')
+    } finally {
+      setSending(false)
+    }
   }
 
-  function decideOwnerApproval(messageId: string, decision: 'approved' | 'declined') {
-    setMessages((items) => items.map((message) =>
-      message.id === messageId && message.approval
-        ? { ...message, approval: { ...message.approval, status: decision } }
-        : message,
-    ))
-    resolveApproval()
-    notify(decision === 'approved'
-      ? 'Checkout approval recorded in this preview. No payment link was created.'
-      : 'Checkout request declined in this preview.')
+  async function decideOwnerApproval(approvalId: string, decision: 'approved' | 'rejected') {
+    await decideApproval(approvalId, decision)
+    await loadMessages()
   }
 
   return (
     <div className="page-body owner-assistant-page">
       <PageHeading
         title="Agent messages"
-        description="A private conversation with your business agent, separate from customer chats."
-        meta={<Badge className="preview-data-label" color="gray" variant="soft" radius="full">Private owner channel</Badge>}
+        description="A private conversation with your Business Agent, separate from customer chats."
+        action={<Button variant="soft" color="gray" onClick={() => void loadMessages()}><ArrowRight size={15} /> Refresh</Button>}
       />
       <div className="owner-channel-notice">
         <span className="owner-channel-notice-icon"><ShieldCheck size={19} /></span>
@@ -1508,45 +2012,70 @@ function OwnerAssistant({ notify, resolveApproval }: { notify: (message: string)
         <header className="owner-thread-header">
           <div className="owner-agent-identity">
             <span className="owner-agent-avatar"><Robot size={20} weight="duotone" /></span>
-            <span><strong>Reactant business agent</strong><small>Private to Olive & Oak Studio</small></span>
+            <span><strong>Reactant business agent</strong><small>Private to this workspace</small></span>
           </div>
-          <Badge color="green" variant="soft">Ready</Badge>
+          <Badge color={error || runtimeStatus === 'unavailable' ? 'red' : runtimeStatus === 'ready' ? 'green' : 'gray'} variant="soft">
+            {error || runtimeStatus === 'unavailable' ? 'Unavailable' : runtimeStatus === 'ready' ? 'Strands ready' : 'Loading'}
+          </Badge>
         </header>
         <div className="owner-thread-context">
           <ChatCircleDots size={17} />
-          <span>This is the owner channel. Customer conversations remain in the Inbox.</span>
+          <span>
+            This is the owner channel. Customer conversations remain in the Inbox.
+            {runtimeStatus === 'unavailable' && ` Configure the Strands runtime (${runtimeReason || 'runtime unavailable'}) to enable replies.`}
+          </span>
         </div>
         <div className="owner-message-list" aria-live="polite">
-          {messages.map((message) => (
-            <article key={message.id} className={`owner-message owner-message-${message.from}`}>
-              <span className="owner-message-author">{message.from === 'agent' ? 'Business agent' : 'You'} <time>{message.time}</time></span>
+          {messages === null && !error && <p className="empty-list">Loading private messages...</p>}
+          {messages?.length === 0 && !error && <p className="empty-list">No private messages yet. Send a note to give the agent business context.</p>}
+          {error && <p className="api-error" role="alert">{error}</p>}
+          {(messages ?? []).map((message) => (
+            <article key={message.id} className={`owner-message owner-message-${message.sender_type === 'agent' ? 'agent' : 'owner'}`}>
+              <span className="owner-message-author">{message.sender_type === 'agent' ? message.display_name : 'You'} <time>{displayTime(message.created_at)}</time></span>
               <p>{message.text}</p>
-              {message.approval && (
+              {message.kind === 'approval_request' && message.approval_id && (
                 <div className="owner-approval-request">
+                  {(() => {
+                    const approval = approvals.find((item) => item.id === message.approval_id)
+                    return (
+                      <>
                   <div className="owner-approval-summary">
                     <span className="owner-approval-icon"><CreditCard size={17} /></span>
-                    <span><strong>PayPal checkout request</strong><small>Order {message.approval.orderId} · {message.approval.amount}</small></span>
-                    <Badge color={message.approval.status === 'pending' ? 'orange' : message.approval.status === 'approved' ? 'green' : 'gray'} variant="soft">
-                      {message.approval.status === 'pending' ? 'Needs review' : message.approval.status === 'approved' ? 'Approved in preview' : 'Declined'}
-                    </Badge>
+                    <span><strong>Approval request</strong><small>Request {message.approval_id}</small></span>
+                    <Badge color={approval?.status === 'pending' ? 'orange' : 'gray'} variant="soft">{approval?.status ?? 'Status unavailable'}</Badge>
                   </div>
-                  {message.approval.status === 'pending'
-                    ? <div className="owner-approval-actions">
-                        <Button variant="soft" color="gray" onClick={() => decideOwnerApproval(message.id, 'declined')}>Decline</Button>
-                        <Button onClick={() => decideOwnerApproval(message.id, 'approved')}><Check size={15} /> Approve request</Button>
-                      </div>
-                    : <small className="owner-approval-result">Preview only. No checkout link was created.</small>}
+                        {approval?.status === 'pending' && <div className="owner-approval-actions">
+                          <Button variant="soft" color="gray" onClick={() => void decideOwnerApproval(message.approval_id!, 'rejected')}>Decline</Button>
+                          <Button onClick={() => void decideOwnerApproval(message.approval_id!, 'approved')}><Check size={15} /> Approve request</Button>
+                        </div>}
+                      </>
+                    )
+                  })()}
                 </div>
               )}
             </article>
           ))}
         </div>
-        <form className="owner-message-composer" onSubmit={sendOwnerMessage}>
+        <form className="owner-message-composer" onSubmit={(event) => void sendOwnerMessage(event)}>
           <label className="sr-only" htmlFor="owner-agent-message">Message your business agent</label>
-          <textarea id="owner-agent-message" rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Message your business agent..." />
+          <textarea
+            id="owner-agent-message"
+            rows={3}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                event.currentTarget.form?.requestSubmit()
+              }
+            }}
+            placeholder={runtimeStatus === 'ready' ? 'Ask your Business Agent anything...' : 'Agent runtime is unavailable. Configure Strands and OpenRouter to continue.'}
+            disabled={runtimeStatus !== 'ready' || sending}
+            aria-describedby="owner-composer-help"
+          />
           <div className="owner-composer-footer">
-            <small>Preview only. Messages are not delivered to an agent service.</small>
-            <Button type="submit" disabled={!draft.trim()}><PaperPlaneTilt size={16} /> Send message</Button>
+            <small id="owner-composer-help">Enter to send · Shift+Enter for a new line · Private to this workspace.</small>
+            <Button type="submit" disabled={!draft.trim() || sending || runtimeStatus !== 'ready'}><PaperPlaneTilt size={16} /> {sending ? 'Sending...' : 'Send message'}</Button>
           </div>
         </form>
       </section>

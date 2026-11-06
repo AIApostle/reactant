@@ -1,5 +1,13 @@
 # React + TypeScript + Vite
 
+## Local backend integration
+
+Copy `.env.example` to `.env.local` and set the Supabase URL and public
+publishable/anon key for the same project configured in `backend/.env`.
+`VITE_API_BASE_URL` should point to the running FastAPI server. The backend
+must include the frontend origin in `ALLOWED_WEB_ORIGINS` (for the default
+Vite server, `http://localhost:5173`).
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

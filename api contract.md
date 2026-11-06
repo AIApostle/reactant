@@ -2,14 +2,15 @@
 
 **Version:** Draft v1  
 **Audience:** Frontend and backend engineers  
-**Status:** Proposed integration contract. Backend routes are not implemented yet.
+**Status:** Implemented backend contract with explicitly marked planned integrations.
 
 This contract describes the HTTP and realtime interfaces the Reactant web app
-needs. The backend directory is currently an empty FastAPI scaffold, so these
-routes are a concrete proposal for implementation, not a claim that the
-endpoints already exist. Backend engineers should generate and publish the
-OpenAPI schema from the implemented Pydantic models and keep it aligned with
-this document.
+needs. The backend is implemented in FastAPI with Supabase Auth/Postgres and
+the Python SDK. OpenAPI is generated from the running app; routes that return
+`503` when required provider or runtime configuration is unavailable use
+explicit error codes. Features that are not implemented are marked `planned`
+in OpenAPI. This document distinguishes those limitations from implemented
+request/response behavior.
 
 ## 1. API boundary
 
@@ -30,8 +31,7 @@ this document.
 - **Pagination:** Cursor based. `limit` defaults to 25 and is capped at 100.
 - **Versioning:** Breaking changes require a new major API prefix.
 - **Documentation:** Publish `/api/v1/openapi.json` and Swagger UI at
-  `/api/v1/docs` outside production, or behind staff authentication in
-  production.
+  `/api/v1/docs` outside production. Both are disabled in production.
 
 ### Standard success envelope
 
@@ -76,10 +76,15 @@ Collection response:
 ```
 
 Use the appropriate HTTP status, including `400` malformed request, `401`
-unauthenticated, `403` not authorized, `404` not found, `409` stale/conflicting
-state, `422` validation failure, `429` rate limited, and `5xx` unexpected
-server/provider failure. Do not return `200` with an error-shaped payload.
-Messages must not disclose secrets or another tenant's resource existence.
+unauthenticated, `403` not authorized, `404` not found, `409` conflicting
+state, `412` stale `If-Match`, `422` validation failure, `428` missing
+`If-Match`, `429` rate limited, and `5xx` unexpected server/provider failure.
+Do not return `200` with an error-shaped payload. Messages must not disclose
+secrets or another tenant's resource existence.
+
+All successful API responses use the documented envelope, except `204 No
+Content` operations, which have no response body. Authentication and provider
+errors use the standard error envelope.
 
 ## 2. Authentication and workspace
 
@@ -109,6 +114,10 @@ against the presence of an authenticated user.
 ### Create workspace
 
 `POST /businesses`
+
+Creating a workspace also creates the default Business Agent configuration
+and approval policy in the same transaction. The new workspace must be ready
+to load its agent settings immediately.
 
 ```json
 {
@@ -150,7 +159,24 @@ against the presence of an authenticated user.
 
 Return an invitation ID, role, email, expiry, and status. Never return the
 invitation's secret token after creation. Send it through the configured
-invitation delivery mechanism.
+invitation delivery mechanism. Invitation acceptance requires a signed-in,
+email-confirmed Supabase user whose email matches the invitation.
+
+`GET /businesses/{business_id}/members` returns each member's `id`, `user_id`,
+`display_name`, `email`, `role`, and `created_at`. Resolve the display name and
+email from the authenticated user profile without exposing unrelated profile
+data. `PATCH /businesses/{business_id}/members/{member_id}` accepts a `role`
+of `admin`, `staff`, or `read_only`; `DELETE` removes a member.
+Only owners may change roles or remove members. Invitation creation returns
+success only after the invitation has been durably stored and email delivery
+has succeeded; otherwise return a clear error without implying an invite was
+sent.
+
+Business `GET` responses include an `ETag` containing the current version.
+Profile `PATCH` requires `If-Match`; omitted fields remain unchanged. A missing
+header returns `428`, and a stale version returns `412`. Workspace creation
+and business updates are implemented; invitations require
+`INVITATION_DELIVERY_URL` and `INVITATION_DELIVERY_TOKEN`.
 
 ## 3. Dashboard and business data
 
@@ -165,6 +191,7 @@ invitation delivery mechanism.
 | `DELETE` | `/businesses/{business_id}/products/{product_id}` | Archive an owner-managed product and remove it from agent search. |
 | `POST` | `/businesses/{business_id}/media/uploads` | Create a short-lived signed upload for a catalog image. |
 | `POST` | `/businesses/{business_id}/media/{asset_id}/complete` | Validate a completed image upload before it can be attached to a product. |
+| `GET` | `/businesses/{business_id}/media/{asset_id}/access` | Issue a short-lived, authenticated read URL for an authorized catalog image. |
 | `GET` | `/businesses/{business_id}/audit-events` | Paginated audit history with filters. |
 | `GET` | `/businesses/{business_id}/notifications` | Merchant-facing notification list. |
 | `POST` | `/businesses/{business_id}/notifications/{notification_id}/read` | Mark a notification read. |
@@ -173,6 +200,15 @@ Summary supports `from` and `to` RFC 3339 query parameters. Product search
 supports `q`, `cursor`, `limit`, `category`, `availability`, `source`
 (`manual`, provider name, or `all`), and `agent_available`. Audit filters
 include `actor`, `event_type`, `resource_type`, `from`, and `to`.
+
+Product reads must be read-after-write consistent for the authenticated
+business member. After a successful product `POST`, `PATCH`, or `DELETE`, a
+subsequent `GET /products` must reflect the mutation without requiring a
+client-side cache purge. Product mutation responses must return the canonical
+resource in the standard `data` envelope. Responses should send
+`Cache-Control: no-store` because catalog availability and agent permissions
+are operational business data; clients may still keep their in-memory view
+until the mutation response is received.
 
 ### Product catalog
 
@@ -211,7 +247,8 @@ Image upload uses a three-step flow:
 
 1. `POST /media/uploads` with `file_name`, `content_type`, `size_bytes`, and
    `purpose: "catalog_product"` returns a short-lived `asset_id`, upload URL,
-   required headers, and expiry.
+   required headers, and expiry. The browser uploads with `PUT` and must send
+   the returned required headers exactly.
 2. The browser uploads bytes directly to the returned URL. The URL is scoped
    to one asset, one method, one content type, and a short expiry. Do not send
    the bytes through application logs.
@@ -231,6 +268,15 @@ Deleting a manual product archives it and prevents further agent retrieval.
 An uploaded asset cannot be deleted while referenced by an active product;
 unused assets are removed by a retention-aware cleanup job.
 
+The authenticated media access route returns `{ "url": "...", "expires_at":
+"..." }`. URLs are short-lived and scoped to the requested asset and
+authorized business member. Product list responses return asset IDs, not permanent public URLs. Until the
+authenticated media access route is available, clients must not fail the
+entire catalog load when image URLs cannot be resolved. The product metadata
+remains usable and the UI should show an unavailable-image state. Once the
+route is implemented, clients can request fresh access URLs when loading
+catalog images.
+
 The setup response should describe each checklist item with `key`, `label`,
 `status` (`not_started`, `in_progress`, `complete`, `attention_required`), and
 an optional `action_url`.
@@ -246,17 +292,20 @@ The response includes the business profile fields above, notification
 preferences (`new_conversations`, `approval_requests`, `payment_updates`,
 `weekly_summary`), and privacy/retention policy metadata. A `PATCH` must leave
 omitted fields unchanged. Do not include credentials in settings responses.
+The settings response has an `ETag`; settings `PATCH` requires `If-Match` and
+atomically applies business fields and notification preferences. Version
+conflicts return `412`.
 
 ## 5. Integrations
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/businesses/{business_id}/integrations` | List configured provider connections and health. |
-| `POST` | `/businesses/{business_id}/integrations/{provider}/authorization` | Start OAuth/authorization and return a short-lived authorization URL. |
-| `GET` | `/integrations/callback/{provider}` | Provider OAuth callback; browser redirect, not called by frontend JavaScript. |
+| `POST` | `/businesses/{business_id}/integrations/{provider}/authorization` | Start provider authorization where merchant consent is required. |
+| `GET` | `/integrations/callback/{provider}` | Handle the provider callback and redirect to the frontend. |
 | `POST` | `/businesses/{business_id}/integrations` | Connect a provider using a supported secure setup method. |
 | `GET` | `/businesses/{business_id}/integrations/{integration_id}` | Read non-secret connection details and health. |
-| `POST` | `/businesses/{business_id}/integrations/{integration_id}/test` | Test provider connectivity and permissions. |
+| `POST` | `/businesses/{business_id}/integrations/{integration_id}/test` | Test provider connectivity and permissions; return updated health. |
 | `POST` | `/businesses/{business_id}/integrations/{integration_id}/sync` | Queue an initial or requested synchronization. |
 | `DELETE` | `/businesses/{business_id}/integrations/{integration_id}` | Revoke/disconnect and schedule credential deletion. |
 
@@ -266,7 +315,7 @@ include `id`, `provider`, `category`, `status`, `connected_at`,
 `last_success_at`, `last_error`, `granted_scopes`, and sync status. Never return
 access tokens, bot tokens, private keys, or OAuth client secrets.
 
-Provider setup example:
+WooCommerce setup request:
 
 ```json
 {
@@ -274,7 +323,33 @@ Provider setup example:
   "credentials": {
     "store_url": "https://store.example",
     "consumer_key": "provided-over-tls",
-    "consumer_secret": "provided-over-tls"
+    "consumer_secret": "provided-over-tls",
+    "webhook_secret": "random 256-bit value generated by the frontend"
+  }
+}
+```
+
+Telegram setup request:
+
+```json
+{
+  "provider": "telegram",
+  "credentials": {
+    "bot_token": "provided-over-tls",
+    "webhook_secret": "random 256-bit value generated by the frontend"
+  }
+}
+```
+
+PayPal setup request:
+
+```json
+{
+  "provider": "paypal",
+  "credentials": {
+    "consumer_key": "PayPal REST app client ID",
+    "consumer_secret": "PayPal REST app secret",
+    "webhook_id": "PayPal webhook ID"
   }
 }
 ```
@@ -282,11 +357,95 @@ Provider setup example:
 Credential submission is allowed only over TLS to an authenticated,
 business-authorized endpoint. Encrypt credentials at rest, redact them from
 logs and traces, and never echo them in any response. Prefer OAuth/authorization
-redirects when the provider supports them.
+redirects when the provider supports them. The browser-generated webhook
+secret must never be persisted in browser storage or returned by the API. The
+backend uses it to configure WooCommerce webhook signatures or Telegram's
+`setWebhook` `secret_token`. For PayPal, the backend exchanges REST app
+credentials for an OAuth 2.0 access token server-side and verifies webhook
+events using the configured webhook ID. A valid Fernet
+`CREDENTIALS_ENCRYPTION_KEY` is required.
+
+The current credential route accepts WooCommerce (`store_url`, `consumer_key`,
+`consumer_secret`, `webhook_secret`), Telegram (`bot_token`, `webhook_secret`),
+and PayPal (`consumer_key`, `consumer_secret`, `webhook_id`) and returns a
+`pending` integration. Credential acceptance is not proof that a provider is
+reachable, configured, or synchronized. Until authorization, webhook
+provisioning, connection tests, and sync workers are implemented, those
+operations must return explicit `503` errors and the frontend must show the
+error rather than mark the connection as healthy.
+
+Provider sandbox preparation, webhook URLs, required PayPal events, Telegram
+BotFather steps, and the first catalog test sequence are documented in
+[`setup.md`](./setup.md). Each business connects its own PayPal merchant app;
+Reactant does not hold or receive merchant funds.
+
+Provider implementation references (official documentation):
+
+- [WooCommerce REST API keys](https://woocommerce.com/document/woocommerce-rest-api/)
+- [Telegram bots FAQ](https://core.telegram.org/bots/faq) and
+  [Bot API setWebhook](https://core.telegram.org/bots/api#setwebhook)
+- [PayPal Checkout standard integration](https://developer.paypal.com/docs/checkout/standard/integrate/)
+- [PayPal webhook signature verification](https://developer.paypal.com/docs/api/webhooks/v1/#verify-webhook-signature_post)
 
 PayPal is limited to creating customer checkout sessions and verifying
 customer payments. Reactant and the Business Agent must not read merchant
 balances, create payouts, or transfer merchant funds.
+
+### Frontend provider-connection flow
+
+The browser must never authenticate to PayPal, WooCommerce, or Telegram with
+merchant secrets. These are server-side integrations:
+
+1. The signed-in owner/admin opens the Integrations screen.
+2. The frontend collects provider credentials only in an in-memory form. Do not
+   put them in local storage, URL parameters, analytics events, or error
+   reports.
+3. Submit the credentials once to
+   `POST /businesses/{business_id}/integrations` over HTTPS with the Supabase
+   access token. The response is a redacted integration record with
+   `status: "pending"`; it never contains credentials.
+4. Display `pending` as **Setup submitted — not verified**. Do not display
+   `connected` until a future backend test/sync response reports it.
+5. The current backend returns `503 provider_adapter_unavailable` for Test and
+   `503 sync_worker_unavailable` for Sync. Until those adapters are deployed,
+   the frontend must hide or disable those buttons and explain that provider
+   verification is not available yet. Do not retry them automatically.
+6. On disconnect, call the backend `DELETE` endpoint and remove the connection
+   from the UI only after a successful response.
+
+For PayPal specifically, the merchant enters the PayPal REST app client ID,
+client secret, and webhook ID in the owner/admin setup form. The frontend does
+not use the PayPal JavaScript SDK for merchant authentication and must never
+receive the client secret. The backend will exchange credentials server-side,
+configure/verify the webhook, and expose only health and checkout results.
+OAuth authorization routes are listed in this contract but are currently
+planned; do not redirect to them until the backend removes the planned marker
+and returns an `authorization_url`.
+
+### Frontend customer checkout flow
+
+Customer checkout is always initiated through the backend, never by trusting
+amounts or payment state supplied by the browser:
+
+1. Create or load the validated order through the business API.
+2. Call `POST /businesses/{business_id}/orders/{order_id}/checkout` with a
+   stable `Idempotency-Key`.
+3. If the response is `202` with `status: "approval_required"`, show
+   **Awaiting business approval** and poll the approval/resource state. Do not
+   open PayPal yet.
+4. If the response is `checkout_created`, open the returned `checkout_url`
+   using a normal top-level navigation or a clearly labelled new tab.
+5. A return from PayPal is only a navigation event. Show **Payment being
+   verified** and refresh the order; only a backend order/payment response or
+   realtime `payment.*` event can show **Paid**.
+6. Treat `503 paypal_unavailable` as a retryable setup/provider error, not as
+   a paid, cancelled, or completed checkout. Preserve the idempotency key when
+   retrying the same operation.
+
+The current backend implements the approval branch and explicitly returns
+`paypal_unavailable` when approval is not required because the PayPal checkout
+adapter is not deployed. The frontend must present that state clearly and
+avoid promising that PayPal is connected or that checkout is available.
 
 ## 6. Business Agent configuration
 
@@ -343,6 +502,15 @@ They must not be used for owner/agent discussions.
 List query parameters: `status`, `channel`, `assignee_id`, `q`, `cursor`, and
 `limit`. Reply body:
 
+The conversation list response must include `id`, `channel`, `status`,
+`customer_name`, `unread`, `updated_at`, and `last_message`. `last_message` is
+either `null` or `{ "text": "...", "created_at": "RFC3339 timestamp" }`.
+These fields power the inbox list; they must not be inferred from sample data
+or client-side placeholders. The conversation detail response also includes
+customer context and order references. The messages route returns ordered
+messages with `sender_type`, `text`, `visibility`, `delivery_status`, and
+`created_at`.
+
 ```json
 {
   "text": "The sand colour is available in Queen and King sizes.",
@@ -354,6 +522,11 @@ The `visibility` value must be `customer` for this endpoint. Internal notes
 must use a separate staff-only endpoint/model and must never be delivered to a
 customer provider. Customer messages and owner-assistant messages have
 different IDs, storage scope, access policy, and realtime event topics.
+Every customer reply requires an `Idempotency-Key`. The endpoint returns
+`202 Accepted` when the message and delivery request have been persisted to
+the outbox. This is **queued, not delivered**: the outbound provider delivery
+worker is not implemented. Display an explicit queued/pending state and do
+not tell the customer the reply was delivered.
 
 ## 8. Private Agent-to-Owner channel
 
@@ -372,9 +545,11 @@ or another customer channel.
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/businesses/{business_id}/owner-assistant/status` | Report whether the Strands/OpenRouter owner agent is ready. |
 | `GET` | `/businesses/{business_id}/owner-assistant/thread` | Get or create the single private owner thread and latest messages. |
 | `GET` | `/businesses/{business_id}/owner-assistant/messages` | Paginate private thread messages. |
 | `POST` | `/businesses/{business_id}/owner-assistant/messages` | Send an owner/team message to the business agent. |
+| `GET` | `/businesses/{business_id}/owner-assistant/runs/{run_id}` | Read the status of an accepted background agent run. |
 | `POST` | `/businesses/{business_id}/owner-assistant/messages/{message_id}/read` | Mark a private agent message read. |
 
 Owner send body:
@@ -387,8 +562,52 @@ Owner send body:
 ```
 
 Use `client_message_id` or `Idempotency-Key` to make retries safe. The
-response includes the persisted owner message and an accepted agent-run ID or
-status. Do not claim the agent answered until an agent response message exists.
+response includes the persisted owner message, `agent_run_id`, and the current
+`agent_run_status` (`queued`, `running`, `succeeded`, or `failed`). The
+endpoint returns `202 Accepted` after the message and run are atomically
+persisted. The Strands worker processes runs outside the request path. Poll
+`GET /businesses/{business_id}/owner-assistant/runs/{run_id}` to update the
+status; render `queued` and `running` as pending, and do not claim the agent
+answered until an agent response message exists.
+
+The status endpoint returns `provider: "strands"`, `enabled`, `available`,
+`model_id`, and a safe `reason` (`ready`, `disabled`,
+`missing_openrouter_key`, or `missing_service_key`). The owner UI must disable
+the composer unless `available` is true and must show configuration guidance
+instead of presenting a successful-looking unavailable channel. Owner messages
+are private workspace communication in both directions: the owner/team sends
+messages to Strands, and the worker persists Strands responses back into the
+same owner thread. They are never sent to customer channels.
+
+Run status response:
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "status": "running",
+    "created_at": "2026-11-04T17:00:00Z",
+    "started_at": "2026-11-04T17:00:01Z",
+    "completed_at": null,
+    "error_code": null
+  },
+  "request_id": "req_01J..."
+}
+```
+
+Terminal states are `succeeded` (the private agent reply has been persisted)
+and `failed` (the worker exhausted its bounded retries). `error_code` is
+generic and must not be used to expose provider details or secrets.
+
+The worker is opt-in via `STRANDS_AGENT_ENABLED=true` and requires
+`SUPABASE_SECRET_KEY` plus the backend-only `OPENROUTER_API_KEY`. Strands uses
+OpenRouter's OpenAI-compatible API endpoint and defaults to the `openrouter/free`
+model router; set `OPENROUTER_MODEL_ID` to select a different OpenRouter model.
+Free model availability, tool support, and rate limits can vary. Its only tool
+is a read-only, business-scoped search over active products whose
+`agent_enabled` flag is true. It cannot change data, create orders, or contact
+customers. Do not attach an MCP server unless one is explicitly configured
+and reviewed; the current local catalog tool does not need MCP.
 
 Private message representation:
 
@@ -450,6 +669,8 @@ Use `Idempotency-Key` for decision requests. The backend must atomically
 transition a pending approval, verify the caller's approver permission, and
 record actor, timestamp, decision, and optional note. Replaying a decision
 must not execute the underlying action a second time.
+The approval decision transition is implemented; downstream actions still
+depend on their relevant worker or provider adapter.
 
 ## 10. Orders and checkout
 
@@ -485,6 +706,9 @@ checkout session before approval. Provider redirects are not proof of
 payment. Only verified provider events/API status can transition payment and
 order state to paid. Never add payout, balance, or fund-transfer endpoints to
 the agent-facing surface.
+The approval-gating flow is implemented. If approval is not needed, the
+PayPal checkout adapter is not yet available and the endpoint returns `503`;
+the frontend must show a retryable unavailable state, not a checkout success.
 
 ## 11. Global search
 
@@ -505,19 +729,23 @@ and integration/order status without polling.
 
 1. Authenticated client requests
    `POST /api/v1/businesses/{business_id}/realtime-ticket`.
-2. The response includes a random, one-use `ticket` with a short expiry (no
-   more than 60 seconds) and a WebSocket URL.
-3. Client opens the returned WebSocket URL. The server consumes the ticket,
+2. The response includes a random, one-use `ticket` with a 60-second expiry
+   and a WebSocket URL.
+3. Client opens the returned WebSocket URL with the offered subprotocol
+   `reactant-ticket.<ticket>`; the ticket is not a URL parameter. The server consumes the ticket,
    verifies its user and business membership, and authorizes event topics.
-4. Reconnect by requesting a new ticket. Do not put long-lived bearer tokens
-   in URLs or logs.
+4. Send the `subscribe` frame immediately after connection. Reconnect by
+   requesting a new ticket and resuming with the last opaque `cursor`, either
+   in the URL's `cursor` query parameter or in the subscribe frame. Do not put
+   long-lived bearer tokens in URLs or logs.
 
 Client frame:
 
 ```json
 {
   "type": "subscribe",
-  "topics": ["owner_assistant", "approvals", "notifications"]
+  "topics": ["owner_assistant", "approvals", "notifications"],
+  "cursor": "opaque-cursor-from-the-last-event"
 }
 ```
 
@@ -525,18 +753,15 @@ Server event:
 
 ```json
 {
+  "id": "uuid",
   "type": "owner_assistant.message_created",
   "business_id": "uuid",
   "occurred_at": "2026-11-04T17:00:00Z",
   "data": {
-    "message": {
-      "id": "uuid",
-      "thread_id": "uuid",
-      "kind": "clarification",
-      "text": "Should the agent offer the item in the blue finish?",
-      "created_at": "2026-11-04T17:00:00Z"
-    }
-  }
+    "message_id": "uuid",
+    "thread_id": "uuid"
+  },
+  "cursor": "opaque-cursor-from-this-event"
 }
 ```
 
@@ -553,7 +778,11 @@ Required event types include:
 Owner assistant events are only delivered to authorized business members and
 must never be included in customer channel events. Persist events before
 publishing; support event IDs and reconnect/resume cursors to avoid missed
-updates.
+updates. The current backend polls the durable outbox and sends an opaque
+cursor with each event. An initial connection without a cursor receives new
+events only; retain the last cursor for reconnects. Tickets expire after 60
+seconds, and the WebSocket origin must be included in `ALLOWED_WEB_ORIGINS`.
+WebSocket frames do not use the HTTP success envelope.
 
 ## 13. Provider webhooks
 
@@ -578,13 +807,56 @@ responses small; agent execution belongs in an asynchronous worker.
 - `Authorization: Bearer <access_token>` on authenticated API calls.
 - `Content-Type: application/json` on JSON writes.
 - `Idempotency-Key: <unique-operation-key>` on order creation, checkout,
-  approval decisions, and other retried side effects.
+  approval decisions, and customer replies. Owner-assistant messages accept
+  `client_message_id` or `Idempotency-Key`.
 - Optional `X-Request-ID` for client correlation; server always returns
   `request_id`.
-- Use `ETag`/`If-Match` for concurrent edits to business or agent settings.
-  Return `412 Precondition Failed` for a stale version.
+- Use `ETag`/`If-Match` for concurrent edits to business profile, business
+  settings, and agent configuration. `If-Match` is required (`428` if absent)
+  and stale versions return `412 Precondition Failed`.
+- Reuse an idempotency key only when retrying the same operation. A different
+  payload with an existing key returns `409`.
 
-## 15. Frontend-to-endpoint mapping
+## 15. Frontend integration requirements
+
+1. Obtain and refresh the user's Supabase Auth session in the frontend, then
+   send the current access token as `Authorization: Bearer <access_token>` on
+   every authenticated API request. Never send the Supabase service-role key.
+2. Select a business from `GET /businesses`; pass its ID only in the route and
+   still handle `404`/`403` authorization failures. Do not infer access from a
+   cached business ID.
+3. Preserve each returned `ETag` and send it as `If-Match` on business,
+   settings, and agent configuration edits. On `412`, reload and ask the user
+   to reconcile rather than silently retrying an overwrite. Send `If-Match`
+   on every such patch; a missing precondition returns `428`.
+4. Generate a unique `Idempotency-Key` per logical side effect and retain it
+   for network retries. Do not generate a new key just because a request timed
+   out. Handle `409` by refreshing state and reporting the conflict.
+5. Render customer replies as **queued** after `202`; their delivery worker is
+   not available. For owner-assistant requests, use the returned `agent_run_id`
+   to poll the run-status endpoint; do not show an agent response until an
+   agent message exists.
+6. For integrations, keep provider credentials in memory only, submit them
+   once over HTTPS, and render `pending` as unverified. Hide/disable Test and
+   Sync while their backend routes return planned `503` responses. For
+   checkout, handle `202 approval_required` separately from `503` PayPal
+   adapter unavailability. Never interpret a redirect as payment confirmation;
+   refresh the order until the backend verifies payment.
+7. For realtime, request a fresh ticket, offer it as the
+   `reactant-ticket.<ticket>` WebSocket subprotocol, subscribe to authorized
+   topics, and persist the last opaque cursor for reconnect. Reacquire tickets
+   on reconnect; never place a bearer token in the URL.
+8. For catalog image upload, use the short-lived returned upload URL and
+   required headers, then call `complete`. Only attach an asset after the
+   backend confirms it is validated.
+9. Treat planned integration OAuth/test/sync routes and the WhatsApp webhook
+   as unavailable (`503`); show a clear disabled or retry state rather than a
+   success-shaped fallback. The agent test route requires runtime configuration
+   and invokes the model, which may incur provider charges.
+10. Render standard API error envelopes by `error.code`; use `request_id` for
+    support diagnostics and never display raw provider/database error details.
+
+## 16. Frontend-to-endpoint mapping
 
 | Frontend surface | API resources |
 |---|---|
@@ -601,10 +873,10 @@ responses small; agent execution belongs in an asynchronous worker.
 | Settings | Business settings, members/invitations, notifications, privacy. |
 | Search | Business-scoped global search. |
 
-## 16. Minimum implementation and acceptance checklist
+## 17. Minimum implementation and acceptance checklist
 
-- [ ] Implement all routes in sections 2-13 or explicitly mark a route
-  `planned` in generated OpenAPI before frontend integration begins.
+- [x] Implement backend routes in sections 2-13 or explicitly mark unavailable
+  routes `planned` in generated OpenAPI.
 - [ ] Enforce membership and resource ownership checks on every
   business-scoped request.
 - [ ] Add request/response Pydantic models and contract tests for all
@@ -624,3 +896,8 @@ responses small; agent execution belongs in an asynchronous worker.
   Business Agent.
 - [ ] Test responsive web layouts separately. API correctness does not replace
   mobile UI testing.
+
+The Supabase SQL migration has not been applied to a project. Apply
+`backend/src/supabase/migrations/0001_core_schema.sql` manually in a
+non-production Supabase project first, and use new numbered migration files
+for all later schema changes.

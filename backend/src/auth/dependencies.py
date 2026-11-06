@@ -1,15 +1,17 @@
 from datetime import datetime
+import logging
 
 import httpx
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from supabase_auth.errors import AuthApiError, AuthRetryableError
 
-from src.client.supabase import get_supabase_client
+from src.supabase.client import get_supabase_client
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 class AuthenticatedUser(BaseModel):
@@ -30,14 +32,21 @@ def _unauthenticated() -> HTTPException:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> AuthenticatedUser:
     if credentials is None or credentials.scheme.lower() != "bearer":
+        logger.warning("authentication_missing request_id=%s", getattr(request.state, "request_id", "unknown"))
         raise _unauthenticated()
 
     try:
         response = get_supabase_client().auth.get_user(credentials.credentials)
     except AuthApiError as error:
+        logger.warning(
+            "authentication_provider_error request_id=%s status=%s",
+            getattr(request.state, "request_id", "unknown"),
+            error.status,
+        )
         if error.status == 429:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -56,6 +65,11 @@ def get_current_user(
             },
         ) from error
     except (AuthRetryableError, httpx.HTTPError) as error:
+        logger.error(
+            "authentication_provider_unavailable request_id=%s error_type=%s",
+            getattr(request.state, "request_id", "unknown"),
+            type(error).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -65,9 +79,15 @@ def get_current_user(
         ) from error
 
     if response is None or response.user is None:
+        logger.warning("authentication_empty_user request_id=%s", getattr(request.state, "request_id", "unknown"))
         raise _unauthenticated()
 
     user = response.user
+    logger.info(
+        "authentication_succeeded request_id=%s user_id=%s",
+        getattr(request.state, "request_id", "unknown"),
+        user.id,
+    )
     return AuthenticatedUser(
         id=user.id,
         email=user.email,
