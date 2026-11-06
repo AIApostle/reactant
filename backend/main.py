@@ -76,7 +76,10 @@ app = FastAPI(
 
 allowed_origins = [
     origin.strip()
-    for origin in os.getenv("ALLOWED_WEB_ORIGINS", "").split(",")
+    for origin in os.getenv(
+        "ALLOWED_WEB_ORIGINS",
+        "https://reactant-theta.vercel.app,http://localhost:5173",
+    ).split(",")
     if origin.strip()
 ]
 app.add_middleware(

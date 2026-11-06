@@ -6,6 +6,8 @@ For the deployed frontend, set `VITE_API_BASE_URL` to
 `https://reactant.onrender.com/api/v1`. For local testing, use `.env.local`
 with `http://localhost:8000/api/v1`. In both cases, set the Supabase URL and
 public publishable/anon key for the same project configured in the backend.
+The current Supabase URL and publishable key are also safe production
+fallbacks in `src/supabase.ts`; environment variables override them when set.
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
