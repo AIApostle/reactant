@@ -23,6 +23,7 @@ from src.integrations.storefronts import (
     sync_woocommerce,
     test_shopify,
     test_woocommerce,
+    test_woocommerce_mcp,
 )
 
 
@@ -40,14 +41,20 @@ def _cipher() -> Fernet:
     if key is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "credential_encryption_unavailable", "message": "Integration setup is not available right now."},
+            detail={
+                "code": "credential_encryption_unavailable",
+                "message": "Integration setup is unavailable because the backend credential encryption key is not configured.",
+            },
         )
     try:
         return Fernet(key.get_secret_value().encode())
     except (ValueError, TypeError) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "credential_encryption_unavailable", "message": "Integration setup is not available right now."},
+            detail={
+                "code": "credential_encryption_unavailable",
+                "message": "Integration setup is unavailable because the backend credential encryption key is invalid.",
+            },
         ) from error
 
 
@@ -55,7 +62,14 @@ def _validate_provider_credentials(body: IntegrationCreate) -> dict[str, str]:
     credentials = body.credentials.model_dump(mode="json", exclude_none=True)
     if body.provider == "woocommerce":
         required = {"store_url", "consumer_key", "consumer_secret", "webhook_secret"}
-        if not required.issubset(credentials) or not credentials["store_url"].startswith("https://"):
+        if (
+            not required.issubset(credentials)
+            or not credentials["store_url"].startswith("https://")
+            or (
+                credentials.get("mcp_endpoint")
+                and not credentials["mcp_endpoint"].startswith("https://")
+            )
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "validation_error", "message": "The request could not be completed."},
@@ -92,7 +106,10 @@ def _decrypt_credentials(ciphertext: str) -> dict[str, str]:
     if key is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "credential_encryption_unavailable", "message": "Integration setup is not available right now."},
+            detail={
+                "code": "credential_encryption_unavailable",
+                "message": "Integration setup is unavailable because the backend credential encryption key is not configured.",
+            },
         )
     try:
         credentials = json.loads(
@@ -307,11 +324,19 @@ def test_integration(
     credentials = _decrypt_credentials(integration["credentials_ciphertext"])
     if integration["provider"] == "woocommerce":
         try:
-            test_woocommerce(
-                str(credentials["store_url"]),
-                credentials["consumer_key"],
-                credentials["consumer_secret"],
-            )
+            if credentials.get("mcp_endpoint"):
+                test_woocommerce_mcp(
+                    str(credentials["store_url"]),
+                    credentials["mcp_endpoint"],
+                    credentials["consumer_key"],
+                    credentials["consumer_secret"],
+                )
+            else:
+                test_woocommerce(
+                    str(credentials["store_url"]),
+                    credentials["consumer_key"],
+                    credentials["consumer_secret"],
+                )
         except (KeyError, StorefrontError) as error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

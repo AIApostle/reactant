@@ -18,6 +18,7 @@ Provider = Literal[
 
 class IntegrationCredentials(RequestModel):
     store_url: AnyHttpUrl | None = None
+    mcp_endpoint: AnyHttpUrl | None = None
     shop_domain: str | None = Field(default=None, min_length=1, max_length=255)
     consumer_key: str | None = Field(default=None, min_length=1, max_length=4096)
     consumer_secret: str | None = Field(default=None, min_length=1, max_length=4096)

@@ -1964,7 +1964,6 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [runtimeStatus, setRuntimeStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading')
-  const [runtimeReason, setRuntimeReason] = useState('')
   const [pendingRuns, setPendingRuns] = useState<string[]>([])
 
   const loadMessages = useCallback(async () => {
@@ -1985,7 +1984,6 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
       .then((status) => {
         if (!active) return
         setRuntimeStatus(status.available ? 'ready' : 'unavailable')
-        setRuntimeReason(status.reason)
       })
       .catch(() => { if (active) setRuntimeStatus('unavailable') })
     return () => { active = false }
@@ -2063,14 +2061,14 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
             <span><strong>Reactant business agent</strong><small>Private to this workspace</small></span>
           </div>
           <Badge color={error || runtimeStatus === 'unavailable' ? 'red' : runtimeStatus === 'ready' ? 'green' : 'gray'} variant="soft">
-            {error || runtimeStatus === 'unavailable' ? 'Unavailable' : runtimeStatus === 'ready' ? 'Strands ready' : 'Loading'}
+            {error || runtimeStatus === 'unavailable' ? 'Unavailable' : runtimeStatus === 'ready' ? 'Ready' : 'Loading'}
           </Badge>
         </header>
         <div className="owner-thread-context">
           <ChatCircleDots size={17} />
           <span>
             This is the owner channel. Customer conversations remain in the Inbox.
-            {runtimeStatus === 'unavailable' && ` Configure the Strands runtime (${runtimeReason || 'runtime unavailable'}) to enable replies.`}
+            {runtimeStatus === 'unavailable' && ' Your agent is not ready yet. Check the agent setup to enable replies.'}
           </span>
         </div>
         <div className="owner-message-list" aria-live="polite">
@@ -2117,7 +2115,7 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
                 event.currentTarget.form?.requestSubmit()
               }
             }}
-            placeholder={runtimeStatus === 'ready' ? 'Ask your Business Agent anything...' : 'Agent runtime is unavailable. Configure Strands and OpenRouter to continue.'}
+            placeholder={runtimeStatus === 'ready' ? 'Ask your Business Agent anything...' : 'Your agent is unavailable. Set it up to continue.'}
             disabled={runtimeStatus !== 'ready' || sending}
             aria-describedby="owner-composer-help"
           />

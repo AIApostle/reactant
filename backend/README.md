@@ -97,6 +97,11 @@ description of the change and its reason.
 - WooCommerce and Shopify credentials can be tested and their products can be
   imported into the tenant's catalog. Each imported product is scoped by
   `business_id` and provider source.
+- WooCommerce may also be tested through its official MCP endpoint by supplying
+  `mcp_endpoint` with the store URL and a least-privilege API key. The endpoint
+  is restricted to the store host or `public-api.wordpress.com`; arbitrary MCP
+  servers are not accepted. The existing REST catalog sync remains the source
+  of imported products.
 - OAuth authorization/callback, provider connection tests/sync, and WhatsApp
   webhook are marked planned and return an explicit unavailable response.
 - `POST /api/v1/businesses/{business_id}/agent/test` invokes OpenRouter; free
@@ -104,3 +109,6 @@ description of the change and its reason.
   admins.
 - Configure all HTTPS origins and secrets before enabling the related
   integration. Do not use a service-role key in user-scoped routes.
+- `CREDENTIALS_ENCRYPTION_KEY` is required before creating an integration. Set
+  the same Fernet key in local development and Render; changing it makes
+  previously stored integration credentials unreadable.

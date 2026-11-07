@@ -66,6 +66,47 @@ def test_woocommerce(store_url: str, consumer_key: str, consumer_secret: str) ->
     )
 
 
+def test_woocommerce_mcp(
+    store_url: str,
+    mcp_endpoint: str,
+    consumer_key: str,
+    consumer_secret: str,
+) -> dict[str, Any]:
+    store_host = urlparse(store_url).netloc.lower().split(":", 1)[0]
+    endpoint = urlparse(mcp_endpoint)
+    endpoint_host = endpoint.netloc.lower().split(":", 1)[0]
+    if endpoint.scheme != "https" or not endpoint_host:
+        raise StorefrontError
+    if endpoint_host != store_host and endpoint_host != "public-api.wordpress.com":
+        raise StorefrontError
+    try:
+        response = httpx.post(
+            mcp_endpoint,
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "X-MCP-API-Key": f"{consumer_key}:{consumer_secret}",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "reactant", "version": "0.1.0"},
+                },
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise StorefrontError from error
+    if not response.content:
+        raise StorefrontError
+    return {"status": "ready"}
+
+
 def sync_woocommerce(
     store_url: str,
     consumer_key: str,
