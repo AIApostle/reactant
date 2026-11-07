@@ -150,17 +150,39 @@ def _telegram_api(
             json=payload,
             timeout=15,
         )
-        response.raise_for_status()
-        result = response.json()
-    except (httpx.HTTPError, ValueError) as error:
+    except httpx.TimeoutException as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "telegram_unavailable", "message": "Telegram could not be reached right now."},
+            detail={"code": "telegram_timeout", "message": "Telegram did not respond in time. Try the connection test again."},
         ) from error
+    except httpx.RequestError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "telegram_network_error", "message": "The backend could not reach Telegram. Check the backend outbound network and try again."},
+        ) from error
+
+    try:
+        result = response.json()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "telegram_invalid_response", "message": "Telegram returned an invalid response. Try again later."},
+        ) from error
+
+    if response.status_code in {401, 403}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "telegram_credentials_invalid", "message": "Telegram rejected the bot token. Copy the token again from BotFather."},
+        )
+    if response.status_code >= 500 or response.status_code == 429:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "telegram_unavailable", "message": "Telegram is temporarily unavailable. Try the connection test again."},
+        )
     if not isinstance(result, dict) or result.get("ok") is not True:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "telegram_credentials_invalid", "message": "Telegram rejected this bot token."},
+            detail={"code": "telegram_request_rejected", "message": f"Telegram rejected the {method} request. Check the bot token and webhook settings."},
         )
     data = result.get("result")
     if not isinstance(data, dict):
