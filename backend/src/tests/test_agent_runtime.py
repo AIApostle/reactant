@@ -89,6 +89,8 @@ class OwnerAssistantRoutesTests(unittest.TestCase):
                 "approval_id": None,
                 "created_at": created_at.isoformat(),
                 "read_at": None,
+                "client_message_id": str(client_message_id),
+                "agent_run_id": str(run_id),
             },
             "run": {"id": str(run_id), "status": "queued"},
         }

@@ -42,6 +42,24 @@ ServiceDatabase = Annotated[Client, Depends(get_service_supabase_client)]
 MESSAGE_FIELDS = (
     "id,thread_id,sender_type,sender_id,display_name,kind,text,approval_id,created_at,read_at"
 )
+MESSAGE_RESPONSE_FIELDS = (
+    "id",
+    "thread_id",
+    "sender_type",
+    "sender_id",
+    "display_name",
+    "kind",
+    "text",
+    "approval_id",
+    "created_at",
+    "read_at",
+)
+
+
+def _owner_message_response(message: dict[str, Any]) -> OwnerMessageResponse:
+    return OwnerMessageResponse(
+        **{field: message[field] for field in MESSAGE_RESPONSE_FIELDS}
+    )
 
 
 def _owner_thread(
@@ -214,7 +232,7 @@ def send_owner_message(
     run = result["run"]
     return ResourceEnvelope(
         data=OwnerMessageAccepted(
-            message=OwnerMessageResponse(**message),
+            message=_owner_message_response(message),
             agent_run_id=run["id"],
             agent_run_status=run["status"],
         ),

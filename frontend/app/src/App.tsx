@@ -2051,7 +2051,6 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
       <PageHeading
         title="Agent messages"
         description="A private conversation with your Business Agent, separate from customer chats."
-        action={<Button variant="soft" color="gray" onClick={() => void loadMessages()}><ArrowRight size={15} /> Refresh</Button>}
       />
       <div className="owner-channel-notice">
         <span className="owner-channel-notice-icon"><ShieldCheck size={19} /></span>
