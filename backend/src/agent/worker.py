@@ -88,7 +88,7 @@ def _process_run(client: Client, run: dict[str, Any]) -> None:
         )
         agent_config = execute(
             client.table("agent_configs")
-            .select("business_context,tone,handoff_rule")
+            .select("business_context,tone,handoff_rule,permissions,approval_policy")
             .eq("business_id", run["business_id"])
             .maybe_single()
         )

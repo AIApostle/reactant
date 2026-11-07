@@ -11,6 +11,7 @@ from strands.models.openai import OpenAIModel
 from src.agent import worker as agent_worker
 from src.agent.config import AgentRuntimeSettings
 from src.agent.runtime import build_business_agent, find_business_products
+from src.agent.prompts import build_business_system_prompt
 from src.owner_assistant import routes as owner_assistant_routes
 from src.catalog.routes import PRODUCT_FIELDS
 from src.schemas.catalog import ProductResponse
@@ -166,6 +167,30 @@ class OwnerAssistantRoutesTests(unittest.TestCase):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_system_prompt_contains_business_context_and_safety_rules(self) -> None:
+        prompt = build_business_system_prompt(
+            business={
+                "name": "Mina's Kitchen",
+                "country": "NG",
+                "currency": "NGN",
+                "return_policy": "Returns within 7 days.",
+                "delivery_policy": "Lagos delivery only.",
+            },
+            agent_config={
+                "business_context": "We sell small-batch meals.",
+                "tone": "friendly",
+                "handoff_rule": "when_uncertain",
+                "permissions": {"create_carts_and_orders": False},
+                "approval_policy": {"require_approval_for_checkout": True},
+            },
+            audience="owner",
+        )
+        self.assertIn("Mina's Kitchen", prompt)
+        self.assertIn("We sell small-batch meals.", prompt)
+        self.assertIn("null stock quantity means stock is not tracked", prompt)
+        self.assertIn("cannot mutate business data", prompt)
+        self.assertIn("require_approval_for_checkout", prompt)
+
     def test_agent_has_only_the_scoped_catalog_tool(self) -> None:
         agent = build_business_agent(
             client=ProductClient(),

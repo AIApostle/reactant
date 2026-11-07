@@ -484,6 +484,17 @@ ownership, eligibility, current product price, inventory, currency, and
 amount immediately before creating a checkout. Frontend values and LLM tool
 arguments are never authoritative.
 
+The runtime builds a tenant-specific system instruction for every agent run. It
+includes the business name, country, currency, return and delivery policies,
+merchant-authored context, tone, handoff rule, permissions, and approval policy.
+The instruction requires catalog-grounded answers, treats unknown stock as
+unknown, separates public web facts from business facts, resists prompt
+injection, and prohibits claiming that orders, checkout, payments, refunds, or
+other side effects completed without a verified backend result. Owner-agent
+messages use a private operational version of this instruction; customer
+messages use a separate version that never exposes internal configuration or
+owner-channel content.
+
 ## 7. Customer conversation channel
 
 These routes are only for customer-facing conversations and human replies.
