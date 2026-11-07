@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import ValidationError
 from supabase import Client
 
@@ -359,15 +359,6 @@ async def receive_woocommerce_webhook(
         payload=payload,
         topic="integrations",
     )
-    if not duplicate:
-        await asyncio.to_thread(
-            _process_telegram_update,
-            client,
-            channel_id=channel_id,
-            business_id=business_id,
-            credentials=credentials,
-            payload=payload,
-        )
     return _ack(request, duplicate)
 
 
@@ -379,6 +370,7 @@ async def receive_woocommerce_webhook(
 async def receive_telegram_webhook(
     channel_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
 ) -> ResourceEnvelope[WebhookAck]:
     secret = request.headers.get("x-telegram-bot-api-secret-token")
     if not secret:
@@ -439,6 +431,15 @@ async def receive_telegram_webhook(
         payload=payload,
         topic="conversations",
     )
+    if not duplicate:
+        background_tasks.add_task(
+            _process_telegram_update,
+            client,
+            channel_id=channel_id,
+            business_id=business_id,
+            credentials=credentials,
+            payload=payload,
+        )
     return _ack(request, duplicate)
 
 
