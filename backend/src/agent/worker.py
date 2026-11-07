@@ -99,6 +99,7 @@ def _process_run(client: Client, run: dict[str, Any]) -> None:
             business=business,
             agent_config=agent_config,
             history=history,
+            audience="owner",
         )
         response_text = invoke_business_agent(agent, message["text"])
         execute(

@@ -21,6 +21,11 @@ class HandoffUpdate(RequestModel):
     action: Literal["accept", "return"]
 
 
+class ConversationLastMessage(RequestModel):
+    text: str
+    created_at: datetime
+
+
 class ConversationResponse(RequestModel):
     id: UUID
     business_id: UUID
@@ -30,6 +35,9 @@ class ConversationResponse(RequestModel):
     handoff_status: str
     created_at: datetime
     updated_at: datetime
+    customer_name: str = "Customer"
+    last_message: ConversationLastMessage | None = None
+    unread: bool = False
 
 
 class CustomerMessageResponse(RequestModel):

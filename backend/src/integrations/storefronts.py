@@ -42,6 +42,11 @@ def _normalize_product(row: dict[str, Any], source: str) -> dict[str, Any]:
         quantities = [variant.get("inventory_quantity") for variant in row["variants"]]
         numeric = [value for value in quantities if isinstance(value, int)]
         stock = sum(numeric) if numeric else None
+    image_urls = [
+        str(image.get("src"))
+        for image in row.get("images", [])
+        if isinstance(image, dict) and isinstance(image.get("src"), str)
+    ]
     return {
         "source": source,
         "provider_product_id": str(row.get("id")),
@@ -53,7 +58,11 @@ def _normalize_product(row: dict[str, Any], source: str) -> dict[str, Any]:
         "stock_quantity": stock if isinstance(stock, int) and stock >= 0 else None,
         "status": "active" if row.get("status", "publish") in {"publish", "active"} else "draft",
         "agent_enabled": True,
-        "provider_data": {"source": source, "provider_id": str(row.get("id"))},
+        "provider_data": {
+            "source": source,
+            "provider_id": str(row.get("id")),
+            "image_urls": image_urls[:6],
+        },
     }
 
 
@@ -126,8 +135,7 @@ def sync_woocommerce(
 
 def _shop_domain(value: str) -> str:
     parsed = urlparse(value if "://" in value else f"https://{value}")
-    domain = parsed.netloc or parsed.path
-    return domain.rstrip("/")
+    return (parsed.hostname or "").rstrip(".")
 
 
 def test_shopify(shop_domain: str, access_token: str) -> dict[str, Any]:

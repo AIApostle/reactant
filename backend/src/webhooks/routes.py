@@ -174,6 +174,26 @@ def _telegram_send_message(bot_token: str, chat_id: str, text: str) -> None:
         raise RuntimeError("Telegram message delivery failed.")
 
 
+def _telegram_send_photo(bot_token: str, chat_id: str, image_url: str, caption: str = "") -> None:
+    try:
+        response = httpx.post(
+            f"https://api.telegram.org/bot{bot_token}/sendPhoto",
+            json={"chat_id": chat_id, "photo": image_url, "caption": caption[:1024]},
+            timeout=15,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise RuntimeError("Telegram image delivery failed.") from error
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise RuntimeError("Telegram image delivery failed.")
+
+
+def _wants_product_images(text: str) -> bool:
+    normalized = text.lower()
+    return any(term in normalized for term in ("image", "photo", "picture", "show me", "send me"))
+
+
 def _process_telegram_update(
     client: Client,
     *,
@@ -198,6 +218,14 @@ def _process_telegram_update(
     if not chat_id or not isinstance(text, str) or not text.strip():
         return
     provider_conversation_id = f"telegram:{chat_id}"
+    customer_name = " ".join(
+        part
+        for part in (sender.get("first_name"), sender.get("last_name"))
+        if isinstance(part, str) and part.strip()
+    ).strip()
+    if not customer_name:
+        username = sender.get("username")
+        customer_name = f"@{username}" if isinstance(username, str) and username.strip() else "Telegram customer"
     conversation_rows = execute(
         client.table("conversations")
         .select("id")
@@ -220,6 +248,7 @@ def _process_telegram_update(
                         "telegram_chat_id": chat_id,
                         "telegram_user_id": str(sender.get("id", "")),
                         "telegram_username": sender.get("username"),
+                        "customer_name": customer_name,
                     },
                     "last_message_at": now,
                 }
@@ -287,6 +316,20 @@ def _process_telegram_update(
         audience="customer",
     )
     response_text = invoke_business_agent(agent, text)
+    if _wants_product_images(text):
+        image_query = " ".join(
+            word for word in text.split()
+            if word.lower().strip(".,!?") not in {"show", "send", "me", "an", "a", "the", "image", "images", "photo", "photos", "picture", "pictures", "of"}
+        )
+        image_products = find_business_products(client, str(business_id), image_query or text, limit=3)
+        for product in image_products:
+            for image_url in product.get("image_urls", [])[:3]:
+                _telegram_send_photo(
+                    credentials["bot_token"],
+                    chat_id,
+                    image_url,
+                    caption=product["name"],
+                )
     _telegram_send_message(credentials["bot_token"], chat_id, response_text)
     execute(
         client.table("customer_messages")

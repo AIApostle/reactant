@@ -1,6 +1,7 @@
 from typing import Any
 
 import httpx
+from storage3.utils import StorageException
 
 from strands import Agent, tool
 from strands.models.openai import OpenAIModel
@@ -17,6 +18,38 @@ MAX_AGENT_OUTPUT_TOKENS = 1200
 MAX_AGENT_TOTAL_TOKENS = 8000
 MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
+MAX_PRODUCT_IMAGE_RESULTS = 3
+
+
+def _product_image_urls(
+    client: Client,
+    business_id: str,
+    row: dict[str, Any],
+) -> list[str]:
+    provider_data = row.get("provider_data") or {}
+    image_urls = provider_data.get("image_urls", []) if isinstance(provider_data, dict) else []
+    urls = [url for url in image_urls if isinstance(url, str) and url.startswith("https://")]
+    asset_ids = row.get("image_asset_ids") or []
+    if asset_ids:
+        assets = execute(
+            client.table("media_assets")
+            .select("delivery_path")
+            .eq("business_id", business_id)
+            .eq("status", "validated")
+            .in_("id", asset_ids[:6])
+        )
+        for asset in assets:
+            path = asset.get("delivery_path")
+            if not isinstance(path, str):
+                continue
+            try:
+                signed = client.storage.from_("product-media").create_signed_url(path, 3600)
+                url = signed.get("signedURL") or signed.get("signed_url")
+                if isinstance(url, str):
+                    urls.append(url)
+            except (StorageException, OSError, TypeError, ValueError):
+                continue
+    return list(dict.fromkeys(urls))[:MAX_PRODUCT_IMAGE_RESULTS]
 
 
 def find_business_products(
@@ -37,7 +70,7 @@ def find_business_products(
     bounded_limit = max(1, min(limit, MAX_PRODUCT_SEARCH_RESULTS))
     rows = execute(
         client.table("products")
-        .select("name,description,price_minor,currency,stock_quantity")
+        .select("name,description,price_minor,currency,stock_quantity,provider_data,image_asset_ids")
         .eq("business_id", business_id)
         .eq("status", "active")
         .eq("agent_enabled", True)
@@ -51,6 +84,7 @@ def find_business_products(
             "price_minor": row["price_minor"],
             "currency": row["currency"],
             "stock_quantity": row["stock_quantity"],
+            "image_urls": _product_image_urls(client, business_id, row),
         }
         for row in rows
     ]

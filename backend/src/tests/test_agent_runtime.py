@@ -253,6 +253,7 @@ class AgentRuntimeTests(unittest.TestCase):
                     "price_minor": 2500,
                     "currency": "USD",
                     "stock_quantity": 3,
+                    "image_urls": [],
                 }
             ],
         )

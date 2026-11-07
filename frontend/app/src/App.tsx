@@ -103,11 +103,12 @@ type CatalogProduct = {
 
 type ConversationApi = {
   id: string
+  business_id: string
   channel: string
   status: string
-  customer_name: string
-  last_message: { text: string; created_at: string } | null
-  unread: boolean
+  customer_name?: string
+  last_message?: { text: string; created_at: string } | null
+  unread?: boolean
   updated_at: string
 }
 
@@ -180,16 +181,17 @@ function nameInitials(name: string) {
 
 function mapConversation(item: ConversationApi): Conversation {
   const status: ConversationStatus = item.status === 'resolved' ? 'Resolved' : item.status === 'needs_reply' ? 'Needs reply' : 'Open'
+  const customerName = item.customer_name?.trim() || 'Customer'
   return {
     id: item.id,
-    name: item.customer_name,
-    initials: nameInitials(item.customer_name),
-    color: colorForInitials(nameInitials(item.customer_name)),
+    name: customerName,
+    initials: nameInitials(customerName),
+    color: colorForInitials(nameInitials(customerName)),
     channel: item.channel,
     preview: item.last_message?.text ?? 'No messages yet',
     time: displayTime(item.last_message?.created_at ?? item.updated_at),
     status,
-    unread: item.unread,
+    unread: item.unread ?? false,
     messages: [],
   }
 }
@@ -337,11 +339,30 @@ function App() {
       )
     }
     if (page === 'inbox') {
-      requests.push(apiRequest<ConversationApi[]>(businessPath(business.id, '/conversations?limit=100')).then((rows) => {
+      const loadConversations = () => apiRequest<ConversationApi[]>(
+        businessPath(business.id, '/conversations?limit=100'),
+        { cache: 'no-store' },
+      ).then((rows) => {
         if (!active) return
-        setConversations(rows.map(mapConversation))
+        setConversations((current) => {
+          const mapped = rows.map(mapConversation)
+          return mapped.map((conversation) => {
+            const existing = current.find((item) => item.id === conversation.id)
+            return existing?.messages.length
+              ? { ...conversation, messages: existing.messages, unread: existing.unread }
+              : conversation
+          })
+        })
         if (rows[0]) setSelectedConversation((current) => current || rows[0].id)
-      }).catch((reason: unknown) => recordFailure('Conversations', reason)))
+      })
+      requests.push(loadConversations().catch((reason: unknown) => recordFailure('Conversations', reason)))
+      const interval = window.setInterval(() => {
+        void loadConversations().catch((reason: unknown) => recordFailure('Conversations', reason))
+      }, 15000)
+      return () => {
+        active = false
+        window.clearInterval(interval)
+      }
     }
     if (page === 'catalog') {
       requests.push(apiRequest<ProductApi[]>(businessPath(business.id, '/products?limit=100'), { cache: 'no-store' })
@@ -1757,20 +1778,16 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
         {providers.map((provider) => {
           const IconComponent = provider.icon
           const connection = integrations.find((item) => item.provider === provider.key && item.status !== 'disconnected')
-          const connected = connection?.status === 'connected'
+          const connected = Boolean(connection && (
+            connection.status === 'connected'
+            || connection.connected_at
+            || connection.last_success_at
+          ))
           return (
             <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={provider.key}>
               <div className="integration-card-top"><span className={`integration-icon integration-icon-${provider.provider.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{provider.category}</Badge></div>
               <h2>{provider.provider}</h2>
               <p>{provider.description}</p>
-              {connection && (
-                <div className="integration-status">
-                  {connected ? <CheckCircle size={15} weight="fill" /> : <WarningCircle size={15} />}
-                  <span>{connection.status.replaceAll('_', ' ')}</span>
-                  {connection.last_success_at && <small>Last synced {displayTime(connection.last_success_at)}</small>}
-                  {connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
-                </div>
-              )}
               {provider.key === 'telegram' && telegramSetup && connection?.id === integrations.find((item) => item.provider === 'telegram')?.id && (
                 <div className="integration-setup-details">
                   <strong>Telegram webhook ready</strong>
@@ -1781,9 +1798,16 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
               <div className="integration-card-actions">
                 {connection
                   ? <>
-                      {provider.key !== 'telegram' && provider.key !== 'shopify' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
-                      {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
-                      <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>
+                      <div className="integration-status">
+                        {connected ? <CheckCircle size={15} weight="fill" /> : <WarningCircle size={15} />}
+                        <span>{connected ? 'Connected' : connection.status.replaceAll('_', ' ')}</span>
+                        {!connected && connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
+                      </div>
+                      <div className="integration-card-actions-buttons">
+                        {provider.key !== 'telegram' && provider.key !== 'shopify' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
+                        {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
+                        <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>
+                      </div>
                     </>
                   : provider.key === 'paypal'
                     ? <Button onClick={() => { setError(''); setDialogProvider('PayPal') }}>Connect</Button>
@@ -1820,7 +1844,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
             ) : dialogProvider === 'Shopify' ? (
               <>
                 <label className="field-label" htmlFor="connection-shop-domain">Shopify store domain</label>
-                <TextField.Root id="connection-shop-domain" name="shop_domain" placeholder="your-store.myshopify.com" required />
+                <TextField.Root id="connection-shop-domain" name="shop_domain" placeholder="your-store.myshopify.com or shop.example.com" required />
                 <p className="form-note">You will review the requested access in Shopify. Reactant never asks you to paste an Admin API token.</p>
               </>
             ) : dialogProvider === 'Telegram' ? (

@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -39,16 +39,21 @@ VISIBLE_FIELDS = (
     "id,provider,category,status,connected_at,last_success_at,last_error,"
     "granted_scopes,sync_status"
 )
-SHOPIFY_DOMAIN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$")
+SHOPIFY_DOMAIN_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?!localhost$)(?!\d{1,3}(?:\.\d{1,3}){3}$)"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$"
+)
 SHOPIFY_AUTH_TTL_SECONDS = 600
 
 
 def _shopify_domain(value: str) -> str:
-    domain = value.strip().lower().removeprefix("https://").removeprefix("http://").rstrip("/")
+    raw = value.strip().lower()
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    domain = (parsed.hostname or "").rstrip(".")
     if not SHOPIFY_DOMAIN_PATTERN.fullmatch(domain):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "shopify_domain_invalid", "message": "Enter a valid Shopify store domain ending in .myshopify.com."},
+            detail={"code": "shopify_domain_invalid", "message": "Enter your Shopify store domain, such as your-store.myshopify.com or shop.example.com."},
         )
     return domain
 
