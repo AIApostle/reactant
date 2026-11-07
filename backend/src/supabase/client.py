@@ -33,6 +33,10 @@ class SupabaseSettings(BaseSettings):
     allowed_web_origins: str = ""
     paypal_api_base_url: str = "https://api-m.sandbox.paypal.com"
     public_api_base_url: str | None = None
+    public_frontend_url: str = "http://localhost:5173"
+    shopify_client_id: str | None = None
+    shopify_client_secret: SecretStr | None = None
+    shopify_scopes: str = "read_products,read_inventory,read_orders"
     paypal_client_id: SecretStr | None = None
     paypal_secret_key: SecretStr | None = None
 

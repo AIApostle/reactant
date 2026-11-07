@@ -1616,6 +1616,18 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     { provider: 'PayPal', key: 'paypal', description: 'Create customer checkout sessions and verify payments.', icon: CreditCard, category: 'Payments' },
   ]
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('provider') !== 'shopify' || !params.get('integration')) return
+    const result = params.get('integration')
+    if (result === 'connected') {
+      notify('Shopify connected successfully.')
+    } else {
+      setError('Shopify authorization did not complete. Try connecting the store again.')
+    }
+    window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`)
+  }, [notify])
+
   async function refreshIntegration(integrationId: string) {
     const updated = await apiRequest<Integration>(businessPath(businessId, `/integrations/${integrationId}`))
     setIntegrations((items) => items.map((item) => item.id === integrationId ? updated : item))
@@ -1627,6 +1639,22 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     if (!dialogProvider) return
     const form = event.currentTarget
     const formData = new FormData(form)
+    if (dialogProvider === 'Shopify') {
+      setSaving(true)
+      setError('')
+      try {
+        const shop = String(formData.get('shop_domain') ?? '').trim()
+        const authorization = await apiRequest<{ authorization_url: string }>(
+          businessPath(businessId, '/integrations/shopify/authorization') + `?shop=${encodeURIComponent(shop)}`,
+          { method: 'POST' },
+        )
+        window.location.assign(authorization.authorization_url)
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : 'Shopify authorization could not be started.')
+        setSaving(false)
+      }
+      return
+    }
     const credentials = dialogProvider === 'WooCommerce'
       ? {
           store_url: String(formData.get('store_url') ?? '').trim(),
@@ -1634,11 +1662,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           consumer_secret: String(formData.get('consumer_secret') ?? ''),
           webhook_secret: createWebhookSecret(),
         }
-      : dialogProvider === 'Shopify'
-        ? {
-            shop_domain: String(formData.get('shop_domain') ?? '').trim(),
-            access_token: String(formData.get('access_token') ?? ''),
-          }
       : dialogProvider === 'Telegram'
         ? { bot_token: String(formData.get('bot_token') ?? ''), webhook_secret: createWebhookSecret() }
         : {
@@ -1656,21 +1679,15 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       setIntegrations((items) => [created, ...items.filter((item) => item.id !== created.id)])
       form.reset()
       setDialogProvider(null)
-      if (['telegram', 'woocommerce', 'shopify'].includes(created.provider)) {
+      if (created.provider === 'telegram') {
+        void testConnection(created)
+      } else if (created.provider === 'woocommerce') {
         const connected = await apiRequest<Integration>(
           businessPath(businessId, `/integrations/${created.id}/test`),
           { method: 'POST' },
         )
         setIntegrations((items) => items.map((item) => item.id === connected.id ? connected : item))
-        if (created.provider === 'telegram') {
-          const setup = await apiRequest<TelegramSetup>(
-            businessPath(businessId, `/integrations/${created.id}/telegram-setup`),
-          )
-          setTelegramSetup(setup)
-          notify(`Telegram connected to @${setup.bot_username}.`)
-        } else {
-          notify(`${dialogProvider} connected successfully.`)
-        }
+        notify(`${dialogProvider} connected successfully.`)
       } else {
         notify(`${dialogProvider} credentials were submitted. Verify the connection before relying on it.`)
       }
@@ -1692,6 +1709,8 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           businessPath(businessId, `/integrations/${integration.id}/telegram-setup`),
         )
         setTelegramSetup(setup)
+        notify(`Telegram connected to @${setup.bot_username}.`)
+        return
       }
       notify(`${integration.provider} connection test completed.`)
     } catch (reason) {
@@ -1762,7 +1781,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
               <div className="integration-card-actions">
                 {connection
                   ? <>
-                      <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>
+                      {provider.key !== 'telegram' && provider.key !== 'shopify' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
                       {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
                       <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>
                     </>
@@ -1782,7 +1801,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
             {dialogProvider === 'WooCommerce'
               ? 'Use an HTTPS store URL and WooCommerce REST API keys with only the permissions Reactant needs.'
               : dialogProvider === 'Shopify'
-                ? 'Use your Shopify store domain and a custom app Admin API token with product and inventory read access.'
+                ? 'Enter your store domain. Shopify will securely ask you to approve the connection.'
               : dialogProvider === 'Telegram'
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
                 : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
@@ -1802,9 +1821,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
               <>
                 <label className="field-label" htmlFor="connection-shop-domain">Shopify store domain</label>
                 <TextField.Root id="connection-shop-domain" name="shop_domain" placeholder="your-store.myshopify.com" required />
-                <label className="field-label" htmlFor="connection-access-token">Shopify Admin API access token</label>
-                <TextField.Root id="connection-access-token" name="access_token" type="password" autoComplete="off" required />
-                <p className="form-note">Create a custom app in Shopify with product and inventory read access. Reactant stores the token encrypted.</p>
+                <p className="form-note">You will review the requested access in Shopify. Reactant never asks you to paste an Admin API token.</p>
               </>
             ) : dialogProvider === 'Telegram' ? (
               <>
@@ -1826,7 +1843,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
             {error && <p className="api-error" role="alert">{error}</p>}
             <div className="dialog-actions">
               <Button type="button" variant="soft" color="gray" disabled={saving} onClick={() => setDialogProvider(null)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Connecting...' : 'Save credentials'}</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Connecting...' : dialogProvider === 'Shopify' ? 'Continue to Shopify' : 'Save credentials'}</Button>
             </div>
           </form>
         </Dialog.Content>

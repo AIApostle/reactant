@@ -1,17 +1,22 @@
 import json
+import re
+import secrets
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
+from urllib.parse import urlencode
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from supabase import Client
 
 from src.auth.dependencies import AuthenticatedUser, get_current_user
 from src.schemas.common import CollectionEnvelope, PaginationMeta, ResourceEnvelope
 from src.schemas.integrations import (
     IntegrationCreate,
+    IntegrationAuthorizationResponse,
     IntegrationResponse,
     TelegramSetupResponse,
 )
@@ -34,6 +39,18 @@ VISIBLE_FIELDS = (
     "id,provider,category,status,connected_at,last_success_at,last_error,"
     "granted_scopes,sync_status"
 )
+SHOPIFY_DOMAIN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$")
+SHOPIFY_AUTH_TTL_SECONDS = 600
+
+
+def _shopify_domain(value: str) -> str:
+    domain = value.strip().lower().removeprefix("https://").removeprefix("http://").rstrip("/")
+    if not SHOPIFY_DOMAIN_PATTERN.fullmatch(domain):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "shopify_domain_invalid", "message": "Enter a valid Shopify store domain ending in .myshopify.com."},
+        )
+    return domain
 
 
 def _cipher() -> Fernet:
@@ -297,19 +314,69 @@ def get_integration(
 
 @router.post(
     "/businesses/{business_id}/integrations/{provider}/authorization",
-    openapi_extra={"x-implementation-status": "planned"},
+    response_model=ResourceEnvelope[IntegrationAuthorizationResponse],
 )
 def start_authorization(
     business_id: UUID,
     provider: str,
+    request: Request,
     user: User,
     client: Database,
-) -> None:
+) -> ResourceEnvelope[IntegrationAuthorizationResponse]:
     membership = get_business_membership(client, business_id, user.id)
     require_role(membership, {"owner", "admin"})
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail={"code": "oauth_unavailable", "message": "Provider authorization is not configured."},
+    if provider != "shopify":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail={"code": "provider_not_supported", "message": "Authorization is not available for this provider yet."},
+        )
+    settings = get_supabase_settings()
+    if not settings.shopify_client_id or not settings.shopify_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "oauth_unavailable", "message": "Shopify authorization is not configured yet."},
+        )
+    shop = _shopify_domain(str(request.query_params.get("shop", "")))
+    callback_base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
+    if not callback_base.startswith("https://") and settings.public_frontend_url.startswith("https://"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "public_url_unavailable", "message": "Set PUBLIC_API_BASE_URL to an HTTPS backend URL before connecting Shopify."},
+        )
+    state_payload = {
+        "business_id": str(business_id),
+        "user_id": str(user.id),
+        "shop": shop,
+        "nonce": secrets.token_urlsafe(24),
+        "issued_at": int(datetime.now(timezone.utc).timestamp()),
+    }
+    state_key = get_supabase_settings().credentials_encryption_key
+    if state_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "credential_encryption_unavailable", "message": "Shopify authorization is unavailable until credential encryption is configured."},
+        )
+    state = Fernet(state_key.get_secret_value().encode()).encrypt(
+        json.dumps(state_payload, separators=(",", ":"), sort_keys=True).encode()
+    ).decode()
+    redirect_uri = f"{callback_base}/api/v1/integrations/callback/shopify"
+    authorization_url = f"https://{shop}/admin/oauth/authorize?" + urlencode(
+        {
+            "client_id": settings.shopify_client_id,
+            "scope": settings.shopify_scopes,
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+    )
+    expires_at = datetime.fromtimestamp(
+        state_payload["issued_at"] + SHOPIFY_AUTH_TTL_SECONDS, timezone.utc
+    )
+    return ResourceEnvelope(
+        data=IntegrationAuthorizationResponse(
+            authorization_url=authorization_url,
+            expires_at=expires_at,
+        ),
+        request_id=request.state.request_id,
     )
 
 
@@ -592,12 +659,93 @@ def disconnect_integration(
         )
 
 
-@router.get(
-    "/integrations/callback/{provider}",
-    openapi_extra={"x-implementation-status": "planned"},
-)
-def integration_callback(provider: str) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail={"code": "oauth_unavailable", "message": "Provider authorization is not configured."},
-    )
+@router.get("/integrations/callback/{provider}")
+def integration_callback(provider: str, request: Request) -> RedirectResponse:
+    settings = get_supabase_settings()
+    frontend = settings.public_frontend_url.rstrip("/")
+    if provider != "shopify":
+        return RedirectResponse(f"{frontend}/?integration=error&provider={provider}&reason=unsupported")
+    state_key = settings.credentials_encryption_key
+    state = request.query_params.get("state")
+    if state_key is None or not state:
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=invalid_state")
+    try:
+        payload = json.loads(Fernet(state_key.get_secret_value().encode()).decrypt(state.encode()))
+        issued_at = int(payload["issued_at"])
+        business_id = UUID(payload["business_id"])
+        shop = _shopify_domain(str(payload["shop"]))
+    except (InvalidToken, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=invalid_state")
+    if int(datetime.now(timezone.utc).timestamp()) - issued_at > SHOPIFY_AUTH_TTL_SECONDS:
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=expired")
+    code = request.query_params.get("code")
+    if not code or not settings.shopify_client_id or not settings.shopify_client_secret:
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=authorization_failed")
+    try:
+        response = httpx.post(
+            f"https://{shop}/admin/oauth/access_token",
+            json={
+                "client_id": settings.shopify_client_id,
+                "client_secret": settings.shopify_client_secret.get_secret_value(),
+                "code": code,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        token_payload = response.json()
+        access_token = token_payload["access_token"]
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=authorization_failed")
+    if not isinstance(access_token, str) or not access_token:
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=authorization_failed")
+    try:
+        service_client = get_service_supabase_client()
+        credentials = {"shop_domain": shop, "access_token": access_token}
+        encryption_key = get_supabase_settings().credentials_encryption_key
+        if encryption_key is None:
+            raise RuntimeError("credential encryption unavailable")
+        ciphertext = Fernet(encryption_key.get_secret_value().encode()).encrypt(
+            json.dumps(credentials, separators=(",", ":"), sort_keys=True).encode()
+        ).decode()
+        existing = execute(
+            service_client.table("integrations")
+            .select("id")
+            .eq("business_id", str(business_id))
+            .eq("provider", "shopify")
+            .maybe_single()
+        )
+        integration_query = service_client.table("integrations")
+        if existing:
+            integration = execute(
+                integration_query.update({
+                    "status": "pending",
+                    "credentials_ciphertext": ciphertext,
+                    "last_error": None,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", existing["id"]).select(VISIBLE_FIELDS).single()
+            )
+        else:
+            integration = execute(
+                integration_query.insert({
+                    "business_id": str(business_id),
+                    "provider": "shopify",
+                    "category": "commerce",
+                    "status": "pending",
+                    "credentials_ciphertext": ciphertext,
+                    "last_error": None,
+                }).select(VISIBLE_FIELDS).single()
+            )
+        test_shopify(shop, access_token)
+        now = datetime.now(timezone.utc).isoformat()
+        execute(
+            service_client.table("integrations").update({
+                "status": "connected",
+                "connected_at": now,
+                "last_success_at": now,
+                "sync_status": "ready",
+                "updated_at": now,
+            }).eq("id", integration["id"])
+        )
+    except (HTTPException, RuntimeError, StorefrontError, httpx.HTTPError, ValueError, KeyError, TypeError):
+        return RedirectResponse(f"{frontend}/?integration=error&provider=shopify&reason=connection_failed")
+    return RedirectResponse(f"{frontend}/?integration=connected&provider=shopify")

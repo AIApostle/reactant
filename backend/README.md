@@ -102,6 +102,11 @@ description of the change and its reason.
   is restricted to the store host or `public-api.wordpress.com`; arbitrary MCP
   servers are not accepted. The existing REST catalog sync remains the source
   of imported products.
+- Shopify uses the authorization-code OAuth flow. Configure
+  `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_SCOPES`, and the exact
+  callback URL `/api/v1/integrations/callback/shopify` in both Shopify and
+  Render. Owners enter only their `*.myshopify.com` domain; the access token is
+  exchanged and encrypted by the backend.
 - OAuth authorization/callback, provider connection tests/sync, and WhatsApp
   webhook are marked planned and return an explicit unavailable response.
 - `POST /api/v1/businesses/{business_id}/agent/test` invokes OpenRouter; free

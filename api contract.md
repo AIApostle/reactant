@@ -426,8 +426,10 @@ not use the PayPal JavaScript SDK for merchant authentication and must never
 receive the client secret. The backend will exchange credentials server-side,
 configure/verify the webhook, and expose only health and checkout results.
 OAuth authorization routes are listed in this contract but are currently
-planned; do not redirect to them until the backend removes the planned marker
-and returns an `authorization_url`.
+implemented for Shopify. Shopify authorization requires the backend
+`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, and an exact registered callback
+URL. The frontend submits only the shop domain and follows the returned
+`authorization_url`; it never receives the Shopify access token.
 
 ### Frontend customer checkout flow
 
