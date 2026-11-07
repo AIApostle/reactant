@@ -198,13 +198,14 @@ def _process_telegram_update(
     if not chat_id or not isinstance(text, str) or not text.strip():
         return
     provider_conversation_id = f"telegram:{chat_id}"
-    conversation = execute(
+    conversation_rows = execute(
         client.table("conversations")
         .select("id")
         .eq("business_id", str(business_id))
         .eq("provider_conversation_id", provider_conversation_id)
-        .maybe_single()
+        .limit(1)
     )
+    conversation = conversation_rows[0] if conversation_rows else None
     now = datetime.now(timezone.utc).isoformat()
     if not conversation:
         conversation = execute(
