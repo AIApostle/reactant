@@ -15,7 +15,11 @@ from supabase import Client
 from src.schemas.common import ResourceEnvelope
 from src.schemas.webhooks import ProviderWebhookPayload, WebhookAck
 from src.agent.config import get_agent_runtime_settings
-from src.agent.runtime import build_business_agent, invoke_business_agent
+from src.agent.runtime import (
+    build_business_agent,
+    find_business_products,
+    invoke_business_agent,
+)
 from src.supabase.client import (
     get_service_supabase_client,
     get_supabase_settings,
@@ -315,7 +319,7 @@ def _process_telegram_update(
         history=history[:-1],
         audience="customer",
     )
-    response_text = invoke_business_agent(agent, text)
+    response_text = invoke_business_agent(agent, text, audience="customer")
     if _wants_product_images(text):
         image_query = " ".join(
             word for word in text.split()

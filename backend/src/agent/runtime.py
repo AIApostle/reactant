@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import httpx
@@ -19,6 +20,16 @@ MAX_AGENT_TOTAL_TOKENS = 8000
 MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_PRODUCT_IMAGE_RESULTS = 3
+
+
+def sanitize_customer_response(text: str) -> str:
+    """Keep customer replies readable and prevent private media URLs leaking into text."""
+    cleaned = re.sub(r"\[([^\]]+)\]\(\s*https?://[^)\s]+\s*\)", r"\1", text)
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = re.sub(r"(\*\*|__|`)", "", cleaned)
+    cleaned = re.sub(r"(?im)^\s*(?:[-*]\s*)?(?:image|photo|picture)\s*:\s*.*$", "", cleaned)
+    cleaned = re.sub(r"^\s*#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
 def _product_image_urls(
@@ -140,7 +151,17 @@ def build_business_agent(
     @tool
     def search_business_products(query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Find active products in this business's catalog by product name."""
-        return find_business_products(client, business_id, query, limit)
+        products = find_business_products(client, business_id, query, limit)
+        if audience == "customer":
+            return [
+                {
+                    **product,
+                    "image_urls": [],
+                    "image_available": bool(product.get("image_urls")),
+                }
+                for product in products
+            ]
+        return products
 
     @tool
     def search_public_web(query: str) -> list[dict[str, str]]:
@@ -171,7 +192,12 @@ def build_business_agent(
     )
 
 
-def invoke_business_agent(agent: Agent, message: str) -> str:
+def invoke_business_agent(
+    agent: Agent,
+    message: str,
+    *,
+    audience: str = "owner",
+) -> str:
     result = agent(
         message,
         limits=Limits(
@@ -183,4 +209,5 @@ def invoke_business_agent(agent: Agent, message: str) -> str:
     response = str(result).strip()
     if not response:
         raise RuntimeError("The agent returned no text response.")
+    response = sanitize_customer_response(response) if audience == "customer" else response
     return response[:10000]

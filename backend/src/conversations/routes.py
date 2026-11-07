@@ -26,9 +26,9 @@ from src.supabase.repository import (
 router = APIRouter()
 User = Annotated[AuthenticatedUser, Depends(get_current_user)]
 Database = Annotated[Client, Depends(get_user_supabase_client)]
-CONVERSATION_FIELDS = (
-    "id,business_id,channel,status,assignee_id,handoff_status,"
-    "customer_context,last_message_at,created_at,updated_at"
+CONVERSATION_FIELDS = "id,business_id,channel,status,assignee_id,handoff_status,created_at,updated_at"
+INBOX_CONVERSATION_FIELDS = (
+    f"{CONVERSATION_FIELDS},customer_context,last_message_at"
 )
 MESSAGE_FIELDS = (
     "id,conversation_id,sender_type,sender_id,text,visibility,delivery_status,created_at"
@@ -68,7 +68,14 @@ def _with_inbox_summary(client: Client, rows: list[dict]) -> list[dict]:
                 "unread": bool(last_message and last_message["sender_type"] == "customer"),
             }
         )
-    return enriched
+    return [
+        {
+            key: value
+            for key, value in row.items()
+            if key not in {"customer_context", "last_message_at"}
+        }
+        for row in enriched
+    ]
 
 
 def _get_conversation(
@@ -112,7 +119,7 @@ def list_conversations(
     get_business_membership(client, business_id, user.id)
     query = (
         client.table("conversations")
-        .select(CONVERSATION_FIELDS)
+        .select(INBOX_CONVERSATION_FIELDS)
         .eq("business_id", str(business_id))
     )
     if status_filter:
