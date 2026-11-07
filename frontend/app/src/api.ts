@@ -132,6 +132,12 @@ export type Integration = {
   sync_status: string
 }
 
+export type TelegramSetup = {
+  webhook_url: string
+  bot_username: string
+  bot_name: string
+}
+
 export type AgentConfig = {
   enabled: boolean
   status: string

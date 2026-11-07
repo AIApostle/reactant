@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -13,6 +14,8 @@ from supabase import Client
 
 from src.schemas.common import ResourceEnvelope
 from src.schemas.webhooks import ProviderWebhookPayload, WebhookAck
+from src.agent.config import get_agent_runtime_settings
+from src.agent.runtime import build_business_agent, invoke_business_agent
 from src.supabase.client import (
     get_service_supabase_client,
     get_supabase_settings,
@@ -156,6 +159,159 @@ def _ack(request: Request, duplicate: bool) -> ResourceEnvelope[WebhookAck]:
     )
 
 
+def _telegram_send_message(bot_token: str, chat_id: str, text: str) -> None:
+    try:
+        response = httpx.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": text[:4096]},
+            timeout=15,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise RuntimeError("Telegram message delivery failed.") from error
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise RuntimeError("Telegram message delivery failed.")
+
+
+def _process_telegram_update(
+    client: Client,
+    *,
+    channel_id: UUID,
+    business_id: UUID,
+    credentials: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return
+    chat = message.get("chat")
+    sender = message.get("from")
+    if not isinstance(chat, dict) or not isinstance(sender, dict):
+        return
+    chat_id = str(chat.get("id", ""))
+    update_id = str(payload["update_id"])
+    text = message.get("text") or message.get("caption") or ""
+    photos = message.get("photo")
+    if photos:
+        text = f"{text}\n[Customer attached a Telegram photo]" if text else "[Customer attached a Telegram photo]"
+    if not chat_id or not isinstance(text, str) or not text.strip():
+        return
+    provider_conversation_id = f"telegram:{chat_id}"
+    conversation = execute(
+        client.table("conversations")
+        .select("id")
+        .eq("business_id", str(business_id))
+        .eq("provider_conversation_id", provider_conversation_id)
+        .maybe_single()
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    if not conversation:
+        conversation = execute(
+            client.table("conversations")
+            .insert(
+                {
+                    "business_id": str(business_id),
+                    "channel": "telegram",
+                    "provider_conversation_id": provider_conversation_id,
+                    "status": "needs_reply",
+                    "customer_context": {
+                        "telegram_chat_id": chat_id,
+                        "telegram_user_id": str(sender.get("id", "")),
+                        "telegram_username": sender.get("username"),
+                    },
+                    "last_message_at": now,
+                }
+            )
+            .select("id")
+            .single()
+        )
+    customer_message = execute(
+        client.table("customer_messages")
+        .insert(
+            {
+                "business_id": str(business_id),
+                "conversation_id": conversation["id"],
+                "sender_type": "customer",
+                "sender_id": str(sender.get("id", "")),
+                "text": text[:10000],
+                "visibility": "customer",
+                "delivery_status": "sent",
+                "provider_message_id": update_id,
+                "idempotency_key": f"telegram:{channel_id}:{update_id}",
+                "created_at": now,
+            }
+        )
+        .select("id")
+        .single()
+    )
+    del customer_message
+    business = execute(
+        client.table("businesses")
+        .select("name,country,currency,return_policy,delivery_policy")
+        .eq("id", str(business_id))
+        .single()
+    )
+    agent_config = execute(
+        client.table("agent_configs")
+        .select("business_context,tone,handoff_rule")
+        .eq("business_id", str(business_id))
+        .maybe_single()
+    )
+    settings = get_agent_runtime_settings()
+    if not settings.strands_agent_enabled or settings.openrouter_api_key is None:
+        return
+    history_rows = execute(
+        client.table("customer_messages")
+        .select("sender_type,text")
+        .eq("business_id", str(business_id))
+        .eq("conversation_id", conversation["id"])
+        .order("created_at", desc=True)
+        .limit(8)
+    )
+    history = [
+        {
+            "role": "assistant" if row["sender_type"] == "agent" else "user",
+            "content": [{"text": row["text"][:1500]}],
+        }
+        for row in reversed(history_rows)
+    ]
+    agent = build_business_agent(
+        client=client,
+        business_id=str(business_id),
+        settings=settings,
+        business=business,
+        agent_config=agent_config,
+        history=history[:-1],
+        audience="customer",
+    )
+    response_text = invoke_business_agent(agent, text)
+    _telegram_send_message(credentials["bot_token"], chat_id, response_text)
+    execute(
+        client.table("customer_messages")
+        .insert(
+            {
+                "business_id": str(business_id),
+                "conversation_id": conversation["id"],
+                "sender_type": "agent",
+                "sender_id": "business-agent",
+                "text": response_text,
+                "visibility": "customer",
+                "delivery_status": "sent",
+                "provider_message_id": f"agent:{update_id}",
+                "idempotency_key": f"agent:telegram:{channel_id}:{update_id}",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    )
+    execute(
+        client.table("conversations")
+        .update({"status": "open", "last_message_at": datetime.now(timezone.utc).isoformat()})
+        .eq("business_id", str(business_id))
+        .eq("id", conversation["id"])
+    )
+
+
 @router.post(
     "/webhooks/woocommerce/{integration_id}",
     status_code=status.HTTP_202_ACCEPTED,
@@ -203,6 +359,15 @@ async def receive_woocommerce_webhook(
         payload=payload,
         topic="integrations",
     )
+    if not duplicate:
+        await asyncio.to_thread(
+            _process_telegram_update,
+            client,
+            channel_id=channel_id,
+            business_id=business_id,
+            credentials=credentials,
+            payload=payload,
+        )
     return _ack(request, duplicate)
 
 
@@ -221,7 +386,32 @@ async def receive_telegram_webhook(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "invalid_webhook_signature", "message": "The webhook signature is invalid."},
         )
-    _, payload = await _read_payload(request)
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            too_large = int(content_length) > MAX_WEBHOOK_BODY
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "malformed_request", "message": "The webhook request is malformed."},
+            ) from error
+        if too_large:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={"code": "payload_too_large", "message": "The webhook payload is too large."},
+            )
+    try:
+        payload = json.loads(await request.body())
+    except (ValueError, UnicodeDecodeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "malformed_request", "message": "The webhook request is malformed."},
+        ) from error
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "malformed_request", "message": "The webhook request is malformed."},
+        )
     update_id = payload.get("update_id")
     if not isinstance(update_id, (int, str)) or len(str(update_id)) > 255:
         raise HTTPException(

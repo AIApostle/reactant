@@ -31,6 +31,8 @@ Additional configuration:
   `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 - `ALLOWED_WEB_ORIGINS` — comma-separated exact browser origins for CORS and
   WebSocket origin checks.
+- `PUBLIC_API_BASE_URL` — public HTTPS backend URL used for provider webhooks,
+  such as `https://reactant.onrender.com`.
 - `INVITATION_DELIVERY_URL` and `INVITATION_DELIVERY_TOKEN` — HTTPS invitation
   delivery webhook.
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.
@@ -40,6 +42,7 @@ Additional configuration:
   migration are configured.
 - `OPENROUTER_API_KEY` — backend-only OpenRouter API key used by Strands'
   OpenAI-compatible provider. Do not expose it to the frontend.
+- `openrouter_api_key` is accepted as an equivalent environment variable name.
 - `OPENROUTER_MODEL_ID` — optional model ID; defaults to `openrouter/free`.
   OpenRouter chooses an available free model for this router; model
   availability, tool support, and rate limits can vary.
@@ -86,8 +89,14 @@ description of the change and its reason.
   creation, capture/reconciliation, and payment-state transitions are not yet
   implemented; approval gating is available and the direct checkout path
   returns `503`.
-- Telegram credentials can be stored encrypted, but `getMe`, `setWebhook`,
-  inbound normalization, and outbound delivery are not yet implemented.
+- Telegram credentials are stored encrypted; connection testing calls `getMe`
+  and registers `setWebhook`. Inbound normalization and outbound delivery are
+  implemented for text/caption messages; the Business Agent replies through the
+  originating Telegram chat. Telegram photo messages are recorded as customer
+  attachments for the conversation.
+- WooCommerce and Shopify credentials can be tested and their products can be
+  imported into the tenant's catalog. Each imported product is scoped by
+  `business_id` and provider source.
 - OAuth authorization/callback, provider connection tests/sync, and WhatsApp
   webhook are marked planned and return an explicit unavailable response.
 - `POST /api/v1/businesses/{business_id}/agent/test` invokes OpenRouter; free

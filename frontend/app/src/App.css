@@ -1939,6 +1939,23 @@
   font-weight: 600;
 }
 
+.integration-setup-details {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dcebe0;
+  border-radius: 9px;
+  color: #356047;
+  background: #f3faf4;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.integration-setup-details strong {
+  font-size: 12px;
+}
+
 .integration-status small {
   margin-left: auto;
   color: #8a958c;

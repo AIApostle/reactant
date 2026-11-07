@@ -175,7 +175,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             sorted(agent.tool_registry.registry.keys()),
-            ["search_business_products"],
+            ["search_business_products", "search_public_web"],
         )
 
     def test_agent_uses_openrouter_free_model_with_configured_api_key(self) -> None:

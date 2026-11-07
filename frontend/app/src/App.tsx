@@ -54,11 +54,12 @@ import {
   type Business,
   type Integration,
   type OwnerMessage,
+  type TelegramSetup,
 } from './api'
 import { getSupabaseClient, isSupabaseConfigured } from './supabase'
 
 type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings'
-type Connection = 'WooCommerce' | 'Telegram' | 'PayPal'
+type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal'
 type ConversationStatus = 'Needs reply' | 'Open' | 'Resolved'
 
 type Conversation = {
@@ -278,6 +279,7 @@ function App() {
   const pendingApprovals = approvals.filter((item) => item.status === 'pending').length
   const connections: Record<Connection, boolean> = {
     WooCommerce: integrations.some((item) => item.provider === 'woocommerce' && item.status === 'connected'),
+    Shopify: integrations.some((item) => item.provider === 'shopify' && item.status === 'connected'),
     Telegram: integrations.some((item) => item.provider === 'telegram' && item.status === 'connected'),
     PayPal: integrations.some((item) => item.provider === 'paypal' && item.status === 'connected'),
   }
@@ -1606,8 +1608,10 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [dialogProvider, setDialogProvider] = useState<Connection | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [telegramSetup, setTelegramSetup] = useState<TelegramSetup | null>(null)
   const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
     { provider: 'WooCommerce', key: 'woocommerce', description: 'Sync products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
+    { provider: 'Shopify', key: 'shopify', description: 'Import products and inventory from your Shopify store.', icon: Storefront, category: 'Store' },
     { provider: 'Telegram', key: 'telegram', description: 'Receive customer messages through your Telegram bot.', icon: TelegramLogo, category: 'Messaging' },
     { provider: 'PayPal', key: 'paypal', description: 'Create customer checkout sessions and verify payments.', icon: CreditCard, category: 'Payments' },
   ]
@@ -1630,6 +1634,11 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           consumer_secret: String(formData.get('consumer_secret') ?? ''),
           webhook_secret: createWebhookSecret(),
         }
+      : dialogProvider === 'Shopify'
+        ? {
+            shop_domain: String(formData.get('shop_domain') ?? '').trim(),
+            access_token: String(formData.get('access_token') ?? ''),
+          }
       : dialogProvider === 'Telegram'
         ? { bot_token: String(formData.get('bot_token') ?? ''), webhook_secret: createWebhookSecret() }
         : {
@@ -1647,7 +1656,24 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       setIntegrations((items) => [created, ...items.filter((item) => item.id !== created.id)])
       form.reset()
       setDialogProvider(null)
-      notify(`${dialogProvider} credentials were submitted. Verify the connection before relying on it.`)
+      if (['telegram', 'woocommerce', 'shopify'].includes(created.provider)) {
+        const connected = await apiRequest<Integration>(
+          businessPath(businessId, `/integrations/${created.id}/test`),
+          { method: 'POST' },
+        )
+        setIntegrations((items) => items.map((item) => item.id === connected.id ? connected : item))
+        if (created.provider === 'telegram') {
+          const setup = await apiRequest<TelegramSetup>(
+            businessPath(businessId, `/integrations/${created.id}/telegram-setup`),
+          )
+          setTelegramSetup(setup)
+          notify(`Telegram connected to @${setup.bot_username}.`)
+        } else {
+          notify(`${dialogProvider} connected successfully.`)
+        }
+      } else {
+        notify(`${dialogProvider} credentials were submitted. Verify the connection before relying on it.`)
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The integration could not be connected.')
     } finally {
@@ -1661,6 +1687,12 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     try {
       await apiRequest(businessPath(businessId, `/integrations/${integration.id}/test`), { method: 'POST' })
       await refreshIntegration(integration.id)
+      if (integration.provider === 'telegram') {
+        const setup = await apiRequest<TelegramSetup>(
+          businessPath(businessId, `/integrations/${integration.id}/telegram-setup`),
+        )
+        setTelegramSetup(setup)
+      }
       notify(`${integration.provider} connection test completed.`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The connection test failed.')
@@ -1720,6 +1752,13 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                   {connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
                 </div>
               )}
+              {provider.key === 'telegram' && telegramSetup && connection?.id === integrations.find((item) => item.provider === 'telegram')?.id && (
+                <div className="integration-setup-details">
+                  <strong>Telegram webhook ready</strong>
+                  <small>Bot: @{telegramSetup.bot_username || telegramSetup.bot_name}</small>
+                  <small>{telegramSetup.webhook_url}</small>
+                </div>
+              )}
               <div className="integration-card-actions">
                 {connection
                   ? <>
@@ -1742,6 +1781,8 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           <Dialog.Description className="dialog-description">
             {dialogProvider === 'WooCommerce'
               ? 'Use an HTTPS store URL and WooCommerce REST API keys with only the permissions Reactant needs.'
+              : dialogProvider === 'Shopify'
+                ? 'Use your Shopify store domain and a custom app Admin API token with product and inventory read access.'
               : dialogProvider === 'Telegram'
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
                 : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
@@ -1756,6 +1797,14 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                 <label className="field-label" htmlFor="connection-consumer-secret">REST API consumer secret</label>
                 <TextField.Root id="connection-consumer-secret" name="consumer_secret" type="password" autoComplete="off" required />
                 <p className="form-note">Create the keys in WooCommerce under Settings, Advanced, REST API. Credentials are sent only to Reactant over HTTPS.</p>
+              </>
+            ) : dialogProvider === 'Shopify' ? (
+              <>
+                <label className="field-label" htmlFor="connection-shop-domain">Shopify store domain</label>
+                <TextField.Root id="connection-shop-domain" name="shop_domain" placeholder="your-store.myshopify.com" required />
+                <label className="field-label" htmlFor="connection-access-token">Shopify Admin API access token</label>
+                <TextField.Root id="connection-access-token" name="access_token" type="password" autoComplete="off" required />
+                <p className="form-note">Create a custom app in Shopify with product and inventory read access. Reactant stores the token encrypted.</p>
               </>
             ) : dialogProvider === 'Telegram' ? (
               <>

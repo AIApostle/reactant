@@ -18,8 +18,10 @@ Provider = Literal[
 
 class IntegrationCredentials(RequestModel):
     store_url: AnyHttpUrl | None = None
+    shop_domain: str | None = Field(default=None, min_length=1, max_length=255)
     consumer_key: str | None = Field(default=None, min_length=1, max_length=4096)
     consumer_secret: str | None = Field(default=None, min_length=1, max_length=4096)
+    access_token: str | None = Field(default=None, min_length=1, max_length=4096)
     bot_token: str | None = Field(default=None, min_length=1, max_length=4096)
     webhook_secret: str | None = Field(default=None, min_length=1, max_length=4096)
     webhook_id: str | None = Field(default=None, min_length=1, max_length=256)
@@ -40,6 +42,12 @@ class IntegrationResponse(RequestModel):
     last_error: str | None
     granted_scopes: list[str]
     sync_status: str
+
+
+class TelegramSetupResponse(RequestModel):
+    webhook_url: AnyHttpUrl
+    bot_username: str
+    bot_name: str
 
 
 class IntegrationAuthorizationResponse(RequestModel):
