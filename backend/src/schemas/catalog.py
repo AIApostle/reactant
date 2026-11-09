@@ -45,6 +45,7 @@ class ProductResponse(RequestModel):
     status: str
     agent_enabled: bool
     image_asset_ids: list[UUID]
+    image_urls: list[str] = Field(default_factory=list, max_length=6)
     created_at: datetime
     updated_at: datetime
 

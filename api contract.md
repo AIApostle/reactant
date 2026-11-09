@@ -217,7 +217,11 @@ and Business Agent. It is not a public storefront and does not create public
 product pages. `GET /products` can return both manually managed products and
 provider-synced products. Each product includes a `source` (`manual` or the
 provider key), an `agent_enabled` flag, a `status`, and ordered image asset
-references. Only authorized workspace members can manage products. The agent
+references. It also includes `image_urls`: short-lived signed delivery URLs
+for validated manual images, or provider image URLs when available. These URLs
+are scoped to the authorized business and must not be stored as permanent
+identifiers. The browser may cache the image responses, but should refetch the
+product resource when an image fails to load or a signed URL expires. Only authorized workspace members can manage products. The agent
 can search only active products with `agent_enabled: true`.
 
 Manual product create example:

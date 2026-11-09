@@ -263,6 +263,7 @@ function App() {
   const [page, setPage] = useState<Page>('overview')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState('')
+  const selectedConversationRef = useRef('')
   const [orders, setOrders] = useState<Order[]>([])
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([])
   const catalogRevision = useRef(0)
@@ -287,6 +288,10 @@ function App() {
   const [toast, setToast] = useState('')
   const [conversationFilter, setConversationFilter] = useState<'All' | ConversationStatus>('All')
   const [orderFilter, setOrderFilter] = useState('All orders')
+
+  useEffect(() => {
+    selectedConversationRef.current = selectedConversation
+  }, [selectedConversation])
 
   const currentConversation = conversations.find((item) => item.id === selectedConversation)
   const activeOrder = orders.find((item) => item.id === selectedOrder)
@@ -371,7 +376,7 @@ function App() {
       requests.push(loadConversations().catch((reason: unknown) => recordFailure('Conversations', reason)))
     }
     if (page === 'catalog') {
-      requests.push(apiRequest<ProductApi[]>(businessPath(business.id, '/products?limit=100'), { cache: 'no-store' })
+      requests.push(apiRequest<ProductApi[]>(businessPath(business.id, '/products?limit=100'))
         .then((rows) => rows.map((product) => mapCatalogProduct(product)))
         .then((rows) => {
           if (active && catalogRevision.current === requestedCatalogRevision) setCatalogProducts(rows)
@@ -431,6 +436,25 @@ function App() {
             const message = JSON.parse(event.data) as { type?: string; data?: { conversation_id?: string } }
             window.dispatchEvent(new CustomEvent('reactant:realtime', { detail: message }))
             if (!message.type?.startsWith('conversation.')) return
+            const conversationId = message.data?.conversation_id
+            if (conversationId && conversationId === selectedConversationRef.current) {
+              void apiRequest<{ sender_type: 'customer' | 'agent' | 'staff'; text: string; created_at: string }[]>(
+                businessPath(businessId, `/conversations/${conversationId}/messages?limit=100`),
+                { cache: 'no-store' },
+              ).then((messages) => {
+                if (!active) return
+                setConversations((items) => items.map((item) => item.id === conversationId
+                  ? {
+                      ...item,
+                      messages: messages.map((conversationMessage) => ({
+                        from: conversationMessage.sender_type,
+                        text: conversationMessage.text,
+                        time: displayTime(conversationMessage.created_at),
+                      })),
+                    }
+                  : item))
+              }).catch(() => undefined)
+            }
             void apiRequest<ConversationApi[]>(
               businessPath(businessId, '/conversations?limit=100'),
               { cache: 'no-store' },

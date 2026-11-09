@@ -41,6 +41,80 @@ PRODUCT_FIELDS = (
     "id,business_id,source,name,description,category,price_minor,currency,"
     "stock_quantity,status,agent_enabled,image_asset_ids,created_at,updated_at"
 )
+PRODUCT_QUERY_FIELDS = f"{PRODUCT_FIELDS},provider_data"
+PRODUCT_RESPONSE_FIELDS = (
+    "id",
+    "business_id",
+    "source",
+    "name",
+    "description",
+    "category",
+    "price_minor",
+    "currency",
+    "stock_quantity",
+    "status",
+    "agent_enabled",
+    "image_asset_ids",
+    "created_at",
+    "updated_at",
+)
+
+
+def _product_image_urls(
+    client: Client,
+    business_id: UUID,
+    row: dict[str, object],
+) -> list[str]:
+    provider_data = row.get("provider_data")
+    provider_urls = (
+        provider_data.get("image_urls", [])
+        if isinstance(provider_data, dict)
+        else []
+    )
+    urls = [
+        url
+        for url in provider_urls
+        if isinstance(url, str) and url.startswith(("https://", "http://"))
+    ]
+    asset_ids = row.get("image_asset_ids") or []
+    if isinstance(asset_ids, list) and asset_ids:
+        assets = execute(
+            client.table("media_assets")
+            .select("id,delivery_path")
+            .eq("business_id", str(business_id))
+            .eq("status", "validated")
+            .in_("id", [str(asset_id) for asset_id in asset_ids[:6]])
+        )
+        asset_paths = {
+            str(asset["id"]): asset.get("delivery_path")
+            for asset in assets
+        }
+        for asset_id in asset_ids[:6]:
+            path = asset_paths.get(str(asset_id))
+            if not isinstance(path, str):
+                continue
+            try:
+                signed = client.storage.from_(STORAGE_BUCKET).create_signed_url(path, 3600)
+                url = signed.get("signedURL") or signed.get("signed_url")
+                if isinstance(url, str):
+                    urls.append(url)
+            except (StorageException, OSError, TypeError, ValueError):
+                logger.warning(
+                    "Product image URL could not be signed business_id=%s asset_id=%s",
+                    business_id,
+                    asset_id,
+                )
+    return list(dict.fromkeys(urls))[:6]
+
+
+def _product_response(
+    client: Client,
+    business_id: UUID,
+    row: dict[str, object],
+) -> ProductResponse:
+    payload = {field: row[field] for field in PRODUCT_RESPONSE_FIELDS}
+    payload["image_urls"] = _product_image_urls(client, business_id, row)
+    return ProductResponse(**payload)
 
 
 def _media_type_from_signature(content: bytes) -> str | None:
@@ -154,7 +228,7 @@ def list_products(
     get_business_membership(client, business_id, user.id)
     query = (
         client.table("products")
-        .select(PRODUCT_FIELDS)
+        .select(PRODUCT_QUERY_FIELDS)
         .eq("business_id", str(business_id))
         .neq("status", "archived")
     )
@@ -174,7 +248,7 @@ def list_products(
         query = query.eq("agent_enabled", agent_available)
     rows, next_cursor, has_more = paginated_rows(query, cursor=cursor, limit=limit)
     return CollectionEnvelope(
-        data=rows,
+        data=[_product_response(client, business_id, row) for row in rows],
         meta=PaginationMeta(next_cursor=next_cursor, has_more=has_more),
         request_id=request.state.request_id,
     )
@@ -205,10 +279,13 @@ def create_product(
                 "image_asset_ids": [str(asset_id) for asset_id in image_asset_ids],
             }
         )
-        .select(PRODUCT_FIELDS)
+        .select(PRODUCT_QUERY_FIELDS)
         .single()
     )
-    return ResourceEnvelope(data=ProductResponse(**product), request_id=request.state.request_id)
+    return ResourceEnvelope(
+        data=_product_response(client, business_id, product),
+        request_id=request.state.request_id,
+    )
 
 
 @router.get(
@@ -225,7 +302,7 @@ def get_product(
     get_business_membership(client, business_id, user.id)
     product = execute(
         client.table("products")
-        .select(PRODUCT_FIELDS)
+        .select(PRODUCT_QUERY_FIELDS)
         .eq("business_id", str(business_id))
         .eq("id", str(product_id))
         .maybe_single()
@@ -235,7 +312,10 @@ def get_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "not_found", "message": "The requested resource was not found."},
         )
-    return ResourceEnvelope(data=ProductResponse(**product), request_id=request.state.request_id)
+    return ResourceEnvelope(
+        data=_product_response(client, business_id, product),
+        request_id=request.state.request_id,
+    )
 
 
 @router.patch(
@@ -280,10 +360,13 @@ def update_product(
         .update(changes)
         .eq("business_id", str(business_id))
         .eq("id", str(product_id))
-        .select(PRODUCT_FIELDS)
+        .select(PRODUCT_QUERY_FIELDS)
         .single()
     )
-    return ResourceEnvelope(data=ProductResponse(**product), request_id=request.state.request_id)
+    return ResourceEnvelope(
+        data=_product_response(client, business_id, product),
+        request_id=request.state.request_id,
+    )
 
 
 @router.delete(

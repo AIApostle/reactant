@@ -266,10 +266,9 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_product_response_projection_excludes_database_only_fields(self) -> None:
         self.assertNotIn("provider_product_id", PRODUCT_FIELDS)
         self.assertNotIn("provider_data", PRODUCT_FIELDS)
-        self.assertEqual(
-            set(PRODUCT_FIELDS.split(",")),
-            set(ProductResponse.model_fields),
-        )
+        self.assertEqual(set(PRODUCT_FIELDS.split(",")), {
+            field for field in ProductResponse.model_fields if field != "image_urls"
+        })
 
 
 class AgentWorkerTests(unittest.IsolatedAsyncioTestCase):
