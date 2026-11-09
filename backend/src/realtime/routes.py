@@ -122,7 +122,7 @@ async def realtime_websocket(
         await websocket.close(code=4401, reason="The realtime ticket is unavailable.")
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=f"{TICKET_PROTOCOL_PREFIX}{ticket}")
     try:
         subscribe_body = await asyncio.wait_for(websocket.receive_json(), timeout=10)
         subscription = RealtimeSubscribe.model_validate(subscribe_body)

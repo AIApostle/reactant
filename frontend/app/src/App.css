@@ -10,6 +10,16 @@
   --radius: 12px;
   min-height: 100dvh;
   color: var(--ink);
+}
+
+.owner-message-image {
+  display: block;
+  width: min(100%, 280px);
+  max-height: 280px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  object-fit: cover;
   background: var(--canvas);
 }
 

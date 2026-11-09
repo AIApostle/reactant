@@ -75,6 +75,18 @@ type Conversation = {
   messages: { from: 'customer' | 'agent' | 'staff'; text: string; time: string }[]
 }
 
+function ownerMessageContent(text: string) {
+  const markdownImage = text.match(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/i)
+  const rawImage = text.match(/https?:\/\/\S+/i)
+  const imageUrl = (markdownImage?.[1] ?? rawImage?.[0])?.replace(/[)\].,]+$/, '')
+  const cleanText = text
+    .replace(/\[[^\]]+\]\(https?:\/\/[^)\s]+\)/gi, '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return { cleanText, imageUrl }
+}
+
 type Order = {
   id: string
   customer: string
@@ -324,6 +336,7 @@ function App() {
 
   useEffect(() => {
     if (!business) return
+    const businessId = business.id
     let active = true
     const failures: string[] = []
     const recordFailure = (name: string, reason: unknown) => {
@@ -340,7 +353,7 @@ function App() {
     }
     if (page === 'inbox') {
       const loadConversations = () => apiRequest<ConversationApi[]>(
-        businessPath(business.id, '/conversations?limit=100'),
+        businessPath(businessId, '/conversations?limit=100'),
         { cache: 'no-store' },
       ).then((rows) => {
         if (!active) return
@@ -356,13 +369,6 @@ function App() {
         if (rows[0]) setSelectedConversation((current) => current || rows[0].id)
       })
       requests.push(loadConversations().catch((reason: unknown) => recordFailure('Conversations', reason)))
-      const interval = window.setInterval(() => {
-        void loadConversations().catch((reason: unknown) => recordFailure('Conversations', reason))
-      }, 15000)
-      return () => {
-        active = false
-        window.clearInterval(interval)
-      }
     }
     if (page === 'catalog') {
       requests.push(apiRequest<ProductApi[]>(businessPath(business.id, '/products?limit=100'), { cache: 'no-store' })
@@ -399,6 +405,61 @@ function App() {
     })
     return () => { active = false }
   }, [business, page])
+
+  useEffect(() => {
+    if (!business) return
+    const businessId = business.id
+    let active = true
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | undefined
+
+    async function connect() {
+      try {
+        const ticket = await apiRequest<{ ticket: string; websocket_url: string }>(
+          businessPath(businessId, '/realtime-ticket'),
+        )
+        if (!active) return
+        socket = new WebSocket(ticket.websocket_url, `reactant-ticket.${ticket.ticket}`)
+        socket.onopen = () => {
+          socket?.send(JSON.stringify({
+            type: 'subscribe',
+            topics: ['conversations', 'owner_assistant', 'approvals', 'orders', 'integrations', 'notifications'],
+          }))
+        }
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data) as { type?: string; data?: { conversation_id?: string } }
+            window.dispatchEvent(new CustomEvent('reactant:realtime', { detail: message }))
+            if (!message.type?.startsWith('conversation.')) return
+            void apiRequest<ConversationApi[]>(
+              businessPath(businessId, '/conversations?limit=100'),
+              { cache: 'no-store' },
+            ).then((rows) => {
+              if (!active) return
+              setConversations((current) => rows.map(mapConversation).map((conversation) => {
+                const existing = current.find((item) => item.id === conversation.id)
+                return existing?.messages.length ? { ...conversation, messages: existing.messages } : conversation
+              }))
+            }).catch(() => undefined)
+          } catch {
+            // Ignore malformed realtime frames and keep the connection alive.
+          }
+        }
+        socket.onclose = () => {
+          if (active) reconnectTimer = window.setTimeout(() => { void connect() }, 2000)
+        }
+      } catch {
+        if (active) reconnectTimer = window.setTimeout(() => { void connect() }, 3000)
+      }
+    }
+
+    void connect()
+    return () => {
+      active = false
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [business])
 
   useEffect(() => {
     if (!toast) return
@@ -2020,6 +2081,15 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
   useEffect(() => { void loadMessages() }, [loadMessages])
 
   useEffect(() => {
+    const handleRealtime = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string }>).detail
+      if (detail?.type?.startsWith('owner_assistant.')) void loadMessages()
+    }
+    window.addEventListener('reactant:realtime', handleRealtime)
+    return () => window.removeEventListener('reactant:realtime', handleRealtime)
+  }, [loadMessages])
+
+  useEffect(() => {
     let active = true
     void apiRequest<{ available: boolean; reason: string }>(businessPath(businessId, '/owner-assistant/status'))
       .then((status) => {
@@ -2119,7 +2189,22 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
           {(messages ?? []).map((message) => (
             <article key={message.id} className={`owner-message owner-message-${message.sender_type === 'agent' ? 'agent' : 'owner'}`}>
               <span className="owner-message-author">{message.sender_type === 'agent' ? message.display_name : 'You'} <time>{displayTime(message.created_at)}</time></span>
-              <p>{message.text}</p>
+              {(() => {
+                const content = ownerMessageContent(message.text)
+                return (
+                  <>
+                    {content.cleanText && <p>{content.cleanText}</p>}
+                    {content.imageUrl && (
+                      <img
+                        className="owner-message-image"
+                        src={content.imageUrl}
+                        alt="Product image from the catalog"
+                        loading="lazy"
+                      />
+                    )}
+                  </>
+                )
+              })()}
               {message.kind === 'approval_request' && message.approval_id && (
                 <div className="owner-approval-request">
                   {(() => {

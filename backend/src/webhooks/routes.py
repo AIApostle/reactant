@@ -280,6 +280,17 @@ def _process_telegram_update(
         .single()
     )
     del customer_message
+    execute(
+        client.table("outbox_events").insert(
+            {
+                "business_id": str(business_id),
+                "event_type": "conversation.message_created",
+                "topic": "conversations",
+                "data": {"conversation_id": conversation["id"]},
+                "dedupe_key": f"telegram-message:{channel_id}:{update_id}",
+            }
+        )
+    )
     business = execute(
         client.table("businesses")
         .select("name,country,currency,return_policy,delivery_policy")
@@ -334,6 +345,14 @@ def _process_telegram_update(
                     image_url,
                     caption=product["name"],
                 )
+        if image_products and any(product.get("image_urls") for product in image_products):
+            response_text = (
+                "I sent the available product image above."
+                if response_text.lower().find("can't") >= 0
+                or response_text.lower().find("cannot") >= 0
+                or response_text.lower().find("don't have") >= 0
+                else response_text
+            )
     _telegram_send_message(credentials["bot_token"], chat_id, response_text)
     execute(
         client.table("customer_messages")
@@ -349,6 +368,17 @@ def _process_telegram_update(
                 "provider_message_id": f"agent:{update_id}",
                 "idempotency_key": f"agent:telegram:{channel_id}:{update_id}",
                 "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    )
+    execute(
+        client.table("outbox_events").insert(
+            {
+                "business_id": str(business_id),
+                "event_type": "conversation.message_created",
+                "topic": "conversations",
+                "data": {"conversation_id": conversation["id"]},
+                "dedupe_key": f"telegram-agent-message:{channel_id}:{update_id}",
             }
         )
     )
