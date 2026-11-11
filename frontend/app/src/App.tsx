@@ -1768,6 +1768,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     { provider: 'Website chat', key: 'website_chat', description: 'Add a floating customer-support chat to your website or web app.', icon: ChatCircleDots, category: 'Messaging' },
     { provider: 'Walrus Memory', key: 'memwal', description: 'Give the agent private, tenant-scoped long-term memory.', icon: Robot, category: 'Memory' },
   ]
+  const websiteConnections = integrations.filter((item) => item.provider === 'website_chat' && item.status !== 'disconnected')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -1785,7 +1786,12 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     const install = await apiRequest<WebsiteChatInstall>(
       businessPath(businessId, `/integrations/${integrationId}/website-chat-install`),
     )
-    setWebsiteInstall(install)
+    setWebsiteInstall(import.meta.env.PROD
+      ? install
+      : {
+          ...install,
+          script: `<script async src="${window.location.origin}/reactant-chat.js" data-business-id="${businessId}" data-api-url="${publicApiBaseUrl}"></script>`,
+        })
   }
 
   async function refreshIntegration(integrationId: string) {
@@ -1966,6 +1972,10 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                   <small>Add this snippet before the closing &lt;/body&gt; tag.</small>
                   <textarea className="integration-install-code" aria-label="Website chat installation code" readOnly value={websiteInstall.script} />
                   <Button variant="soft" color="gray" onClick={() => {
+                    if (!navigator.clipboard?.writeText) {
+                      setError('Clipboard access is unavailable. Select and copy the installation code manually.')
+                      return
+                    }
                     void navigator.clipboard.writeText(websiteInstall.script)
                       .then(() => notify('Installation code copied.'))
                       .catch(() => setError('Could not copy the installation code. Select and copy it manually.'))
@@ -1989,6 +1999,17 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                   </details>
                 </div>
               )}
+              {provider.key === 'website_chat' && websiteConnections.length > 0 && (
+                <div className="integration-setup-details">
+                  <strong>Registered websites</strong>
+                  {websiteConnections.map((item) => (
+                    <div className="website-origin-row" key={item.id}>
+                      <span>{item.allowed_origin || 'Registered website'}</span>
+                      <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(item)}>Remove</Button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="integration-card-actions">
                 {connection
                   ? <>
@@ -2000,7 +2021,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                       <div className="integration-card-actions-buttons">
                         {provider.key !== 'telegram' && provider.key !== 'shopify' && provider.key !== 'website_chat' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
                         {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
-                        <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>
+                        {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>}
                       </div>
                     </>
                   : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
@@ -2032,7 +2053,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
               : dialogProvider === 'Telegram'
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
               : dialogProvider === 'Website chat'
-                ? 'Register the exact HTTPS origin where the widget will run. For local testing, use localhost.'
+                ? 'Register the exact site origin. Use HTTPS in production; localhost is accepted for local testing.'
                 : dialogProvider === 'Walrus Memory'
                   ? 'Connect your Walrus Memory account. Memory is isolated by business and customer, and customer memories are only used after opt-in.'
                   : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}

@@ -25,7 +25,8 @@ ignored `.env` file and never commit or log them. Required configuration:
 Additional configuration:
 
 - `SUPABASE_SECRET_KEY` — service-role/secret key, only for backend service
-  operations. Never expose it to the frontend.
+  operations including public website chat and private memory. Never expose it
+  to the frontend.
 - `CREDENTIALS_ENCRYPTION_KEY` — Fernet key required to store integration
   credentials. Generate one with
   `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
@@ -37,8 +38,9 @@ Additional configuration:
 - `INVITATION_DELIVERY_URL` and `INVITATION_DELIVERY_TOKEN` — HTTPS invitation
   delivery webhook.
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.
-- `STRANDS_AGENT_ENABLED=true` — opt in to the Strands background worker and
--  owner-assistant runtime. Requires `SUPABASE_SECRET_KEY` and
+- `STRANDS_AGENT_ENABLED=true` — opt in to the Strands background worker,
+  owner-assistant runtime, and website chat agent. Requires
+  `SUPABASE_SECRET_KEY` and
   `OPENROUTER_API_KEY`. Keep disabled until these credentials and the Supabase
   migration are configured.
 - `OPENROUTER_API_KEY` — backend-only OpenRouter API key used by Strands'
@@ -78,6 +80,8 @@ and
 [`src/supabase/migrations/0004_chat_widgets_and_memory.sql`](src/supabase/migrations/0004_chat_widgets_and_memory.sql)
 and
 [`src/supabase/migrations/0005_customer_chat_images.sql`](src/supabase/migrations/0005_customer_chat_images.sql)
+and
+[`src/supabase/migrations/0006_integration_allowed_origins.sql`](src/supabase/migrations/0006_integration_allowed_origins.sql)
 manually in the Supabase SQL Editor. The application does not apply migrations
 automatically. Test them against a non-production Supabase project before
 production use.
@@ -138,6 +142,11 @@ description of the change and its reason.
   short-lived session tokens. The reusable app API uses the same session and
   message endpoints under `/api/v1/public/widgets/`; do not embed business
   credentials in client apps.
+  For local testing, use the local Vite script and API explicitly:
+  `<script async src="http://localhost:5173/reactant-chat.js" data-business-id="BUSINESS_UUID" data-api-url="http://localhost:8000/api/v1"></script>`.
+- Website chat accepts up to three customer JPEG, PNG, or WebP images per
+  message. It stores private normalized images in Supabase Storage; apply
+  migrations `0004` and `0005` before enabling image messages.
 - Walrus Memory credentials are supplied per business and encrypted at rest.
   Owner memories use a business-specific namespace; customer memory uses a
   business- and customer-specific namespace and is available only after

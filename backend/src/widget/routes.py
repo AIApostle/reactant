@@ -37,7 +37,7 @@ IMAGE_QUERY_STOP_WORDS = {
     "a", "an", "and", "can", "could", "do", "for", "get", "i", "image",
     "images", "it", "me", "of", "please", "picture", "pictures", "photo",
     "photos", "see", "show", "some", "the", "this", "that", "to", "want",
-    "you",
+    "you", "one", "product", "products", "item", "items",
 }
 
 
@@ -86,7 +86,7 @@ def _integration_for_origin(client: Client, business_id: str, origin: str) -> di
         .eq("business_id", business_id)
         .eq("provider", "website_chat")
         .eq("status", "connected")
-        .limit(10)
+        .limit(100)
     )
     key = get_supabase_settings().credentials_encryption_key
     for row in rows:
@@ -206,7 +206,7 @@ def _image_query(text: str, history: list[dict[str, Any]]) -> str:
     query = clean(IMAGE_REQUEST.sub(" ", text))
     if query:
         return query
-    for row in reversed(history):
+    for row in history:
         if row.get("sender_type") == "customer":
             query = clean(str(row.get("text", "")))
             if query:

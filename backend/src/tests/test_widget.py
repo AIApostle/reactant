@@ -53,6 +53,16 @@ class WidgetSessionTests(unittest.TestCase):
         query = routes._image_query("Can you show me photos of red shoes?", [])
         self.assertEqual(query, "red shoes")
 
+    def test_image_query_uses_the_most_recent_customer_context(self) -> None:
+        query = routes._image_query(
+            "Can you show me a photo of that one?",
+            [
+                {"sender_type": "customer", "text": "Blue hat"},
+                {"sender_type": "customer", "text": "Red shoes"},
+            ],
+        )
+        self.assertEqual(query, "blue hat")
+
     def test_customer_memory_namespaces_are_isolated_by_business_and_customer(self) -> None:
         first_business = str(uuid4())
         second_business = str(uuid4())

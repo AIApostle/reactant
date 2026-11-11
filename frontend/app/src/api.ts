@@ -151,6 +151,7 @@ export type Business = {
 export type Integration = {
   id: string
   provider: 'woocommerce' | 'telegram' | 'paypal' | 'shopify' | 'whatsapp' | 'website_chat' | 'memwal'
+  allowed_origin: string | null
   category: string
   status: string
   connected_at: string | null

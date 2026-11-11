@@ -38,7 +38,7 @@ User = Annotated[AuthenticatedUser, Depends(get_current_user)]
 Database = Annotated[Client, Depends(get_user_supabase_client)]
 VISIBLE_FIELDS = (
     "id,provider,category,status,connected_at,last_success_at,last_error,"
-    "granted_scopes,sync_status"
+    "granted_scopes,sync_status,allowed_origin"
 )
 SHOPIFY_DOMAIN_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!localhost$)(?!\d{1,3}(?:\.\d{1,3}){3}$)"
@@ -271,7 +271,7 @@ def list_integrations(
         .order("created_at", desc=True)
     )
     return CollectionEnvelope(
-        data=rows,
+        data=[IntegrationResponse(**row) for row in rows],
         meta=PaginationMeta(next_cursor=None, has_more=False),
         request_id=request.state.request_id,
     )
@@ -289,7 +289,13 @@ def create_integration(
     user: User,
     client: Database,
 ) -> ResourceEnvelope[IntegrationResponse]:
-    if request.url.scheme != "https":
+    local_website_chat = (
+        body.provider == "website_chat"
+        and request.url.scheme == "http"
+        and request.client is not None
+        and request.client.host in {"localhost", "127.0.0.1", "::1"}
+    )
+    if request.url.scheme != "https" and not local_website_chat:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "tls_required", "message": "Integration credentials must be submitted over HTTPS."},
@@ -315,6 +321,7 @@ def create_integration(
                 }[body.provider],
                 "status": "connected" if body.provider == "website_chat" else "pending",
                 "credentials_ciphertext": ciphertext,
+                "allowed_origin": credentials.get("allowed_origin"),
                 "connected_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
                 "last_success_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
                 "sync_status": "ready" if body.provider == "website_chat" else "idle",
@@ -767,6 +774,7 @@ def disconnect_integration(
             {
                 "status": "disconnected",
                 "credentials_ciphertext": None,
+                "allowed_origin": None,
                 "last_error": None,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }

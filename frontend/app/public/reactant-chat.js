@@ -24,6 +24,7 @@
     .reactant-chat-attach{display:grid;place-items:center;width:40px;border:1px solid #dfe7df;border-radius:10px;color:#536157;cursor:pointer}
     .reactant-chat-attach input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
     .reactant-chat-send{border:0;border-radius:10px;padding:0 14px;background:#315c3e;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+    .reactant-chat-launch:focus-visible,.reactant-chat-close:focus-visible,.reactant-chat-attach:focus-within,.reactant-chat-send:focus-visible{outline:3px solid #91b79a;outline-offset:2px}
     .reactant-chat-send:disabled{opacity:.55;cursor:wait}.reactant-chat-note{color:#69766c;font-size:12px}
     @media(max-width:520px){.reactant-chat-root{right:12px;bottom:12px}.reactant-chat-panel{position:fixed;inset:auto 8px 82px;width:auto;height:min(70dvh,600px)}}
   `
@@ -59,6 +60,8 @@
   const memoryConsent = root.querySelector('[name="memory-consent"]')
   const messageElements = new Map()
   const visitorStorageKey = `reactant.widget.visitor.${businessId}`
+  const consentStorageKey = `reactant.widget.memory-consent.${businessId}`
+  memoryConsent.checked = localStorage.getItem(consentStorageKey) === 'true'
   let visitorId = localStorage.getItem(visitorStorageKey)
   if (!visitorId) {
     visitorId = crypto.randomUUID()
@@ -187,6 +190,7 @@
     note.textContent = files.length ? `${files.length} image${files.length === 1 ? '' : 's'} ready to send.` : ''
   })
   memoryConsent.addEventListener('change', () => {
+    localStorage.setItem(consentStorageKey, String(memoryConsent.checked))
     if (started) {
       if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000)
       messageElements.clear()

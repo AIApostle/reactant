@@ -1965,6 +1965,18 @@
   font-size: 12px;
 }
 
+.website-origin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.website-origin-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .integration-install-code {
   width: 100%;
   min-height: 54px;

@@ -42,6 +42,7 @@ class IntegrationCreate(RequestModel):
 class IntegrationResponse(RequestModel):
     id: UUID
     provider: str
+    allowed_origin: str | None = None
     category: str
     status: str
     connected_at: datetime | None
