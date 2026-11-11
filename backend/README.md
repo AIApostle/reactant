@@ -61,6 +61,9 @@ Additional configuration:
   for the OpenRouter provider.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
+- `PAYPAL_WEBHOOK_IDS` — backend-only JSON object mapping each PayPal integration
+  UUID in the webhook URL to its PayPal webhook ID. Do not configure this in the
+  frontend or store it with seller account credentials.
 - `PUBLIC_FRONTEND_URL` — HTTPS frontend origin used for customer checkout and
   for hosting the `reactant-chat.js` website widget installer.
 - `AGENTCARD_ENABLED` — deployment-wide opt-in for agent-originated checkout;

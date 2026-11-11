@@ -310,8 +310,6 @@ conflicts return `412`.
 | `GET` | `/integrations/callback/{provider}` | Handle the provider callback and redirect to the frontend. |
 | `POST` | `/businesses/{business_id}/integrations` | Connect a provider using a supported secure setup method. |
 | `GET` | `/businesses/{business_id}/integrations/{integration_id}` | Read non-secret connection details and health. |
-| `GET` | `/businesses/{business_id}/integrations/{integration_id}/paypal-webhook` | Return the PayPal webhook URL and whether its ID is configured. |
-| `PUT` | `/businesses/{business_id}/integrations/{integration_id}/paypal-webhook` | Store the PayPal webhook ID encrypted with the integration credentials. |
 | `POST` | `/businesses/{business_id}/integrations/{integration_id}/test` | Test provider connectivity and permissions; return updated health. |
 | `POST` | `/businesses/{business_id}/integrations/{integration_id}/sync` | Queue an initial or requested synchronization. |
 | `DELETE` | `/businesses/{business_id}/integrations/{integration_id}` | Revoke/disconnect and schedule credential deletion. |
@@ -355,21 +353,21 @@ Telegram setup request:
 }
 ```
 
-PayPal setup request:
+PayPal seller setup request:
 
 ```json
 {
   "provider": "paypal",
   "credentials": {
-    "consumer_key": "PayPal REST app client ID",
-    "consumer_secret": "PayPal REST app secret"
+    "seller_paypal_email": "seller@example.com"
   }
 }
 ```
 
-After creating the integration, create a PayPal webhook at the URL returned by
-`GET /businesses/{business_id}/integrations/{integration_id}/paypal-webhook`,
-then save the PayPal webhook ID with the corresponding `PUT` route.
+The PayPal REST app credentials and webhook IDs are backend-only settings.
+Configure `PAYPAL_WEBHOOK_IDS` as a JSON object mapping each integration ID to
+the webhook ID registered for its
+`{PUBLIC_API_BASE_URL}/webhooks/paypal/{integration_id}` endpoint.
 
 Credential submission is allowed only over TLS to an authenticated,
 business-authorized endpoint. Encrypt credentials at rest, redact them from
@@ -377,19 +375,17 @@ logs and traces, and never echo them in any response. Prefer OAuth/authorization
 redirects when the provider supports them. The browser-generated webhook
 secret must never be persisted in browser storage or returned by the API. The
 backend uses it to configure WooCommerce webhook signatures or Telegram's
-`setWebhook` `secret_token`. For PayPal, the backend exchanges REST app
-credentials for an OAuth 2.0 access token server-side and verifies webhook
-events using the configured webhook ID. A valid Fernet
-`CREDENTIALS_ENCRYPTION_KEY` is required.
+`setWebhook` `secret_token`. For PayPal, Reactant uses its backend-only REST app
+credentials for OAuth and signature verification. Webhook IDs are configured
+server-side in `PAYPAL_WEBHOOK_IDS`, mapped by integration ID. A valid Fernet
+`CREDENTIALS_ENCRYPTION_KEY` is required for encrypted seller account details.
 
-The current credential route accepts WooCommerce (`store_url`, `consumer_key`,
+The credential route accepts WooCommerce (`store_url`, `consumer_key`,
 `consumer_secret`, `webhook_secret`), Telegram (`bot_token`, `webhook_secret`),
-and PayPal (`consumer_key`, `consumer_secret`, `webhook_id`) and returns a
-`pending` integration. Credential acceptance is not proof that a provider is
-reachable, configured, or synchronized. Until authorization, webhook
-provisioning, connection tests, and sync workers are implemented, those
-operations must return explicit `503` errors and the frontend must show the
-error rather than mark the connection as healthy.
+and PayPal (`seller_paypal_email`) credentials. Credential acceptance is not
+proof that a provider is reachable, configured, or synchronized. The
+integration test endpoint verifies connectivity before reporting a connection
+as healthy.
 
 Provider sandbox preparation, webhook URLs, required PayPal events, Telegram
 BotFather steps, and the first catalog test sequence are documented in

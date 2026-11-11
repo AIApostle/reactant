@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from time import sleep
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from pydantic import SecretStr
@@ -17,6 +17,7 @@ from src.agent.runtime import (
     build_business_agent,
     customer_catalog_product,
     find_business_products,
+    include_secure_checkout_link,
     product_image_attachments,
     product_image_query,
     product_image_reply,
@@ -225,7 +226,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("Mina's Kitchen", prompt)
         self.assertIn("We sell small-batch meals.", prompt)
         self.assertIn("null stock quantity means stock is not tracked", prompt)
-        self.assertIn("cannot mutate business data", prompt)
+        self.assertIn("cannot contact customers", prompt)
         self.assertIn("require_approval_for_checkout", prompt)
         customer_prompt = build_business_system_prompt(
             business={"name": "Store"},
@@ -233,7 +234,15 @@ class AgentRuntimeTests(unittest.TestCase):
             audience="customer",
         )
         self.assertIn("matching catalog images automatically when available", customer_prompt)
-        self.assertIn("even when the customer did not explicitly", customer_prompt)
+        self.assertIn("Do not send product photos", customer_prompt)
+        self.assertIn("explicitly asks to see a photo", customer_prompt)
+        owner_prompt = build_business_system_prompt(
+            business={"name": "Store"},
+            agent_config=None,
+            audience="owner",
+        )
+        self.assertIn("create_approval_request", owner_prompt)
+        self.assertIn("approval does not execute", owner_prompt)
 
     def test_agent_has_only_the_scoped_catalog_tool(self) -> None:
         with patch("src.agent.runtime.get_memory_config", return_value=None):
@@ -252,6 +261,100 @@ class AgentRuntimeTests(unittest.TestCase):
             sorted(agent.tool_registry.registry.keys()),
             ["search_business_products", "search_public_web"],
         )
+
+    def test_owner_agent_run_has_approval_request_tool(self) -> None:
+        with patch("src.agent.runtime.get_memory_config", return_value=None):
+            agent = build_business_agent(
+                client=ProductClient(),
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store", "country": "US", "currency": "USD"},
+                agent_config=None,
+                history=[],
+                audience="owner",
+                agent_run_id="run-a",
+            )
+
+        self.assertIn("create_approval_request", agent.tool_registry.registry)
+
+    def test_owner_agent_can_create_an_idempotent_approval_request(self) -> None:
+        approval_id = str(uuid4())
+        created_approval = {
+            "id": approval_id,
+            "status": "pending",
+            "action_type": "issue_refund",
+            "impact": {"summary": "Refund order 42", "amount_minor": 1250, "currency": "USD"},
+        }
+        client = MagicMock()
+        with (
+            patch("src.agent.runtime.get_memory_config", return_value=None),
+            patch(
+                "src.agent.runtime.execute",
+                side_effect=[None, created_approval, None],
+            ) as execute_query,
+        ):
+            agent = build_business_agent(
+                client=client,
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store"},
+                agent_config=None,
+                history=[],
+                audience="owner",
+                agent_run_id="run-a",
+            )
+            result = agent.tool_registry.registry[
+                "create_approval_request"
+            ]._tool_func(
+                action_type="issue refund",
+                summary="Refund order 42",
+                amount_minor=1250,
+                currency="usd",
+            )
+
+        self.assertEqual(result["approval_id"], approval_id)
+        self.assertEqual(result["status"], "pending")
+        self.assertIn("does not execute", result["message"])
+        self.assertEqual(execute_query.call_count, 3)
+        inserted_approval = client.table.return_value.insert.call_args_list[0].args[0]
+        self.assertEqual(inserted_approval["requested_by"], "business_agent")
+        self.assertEqual(inserted_approval["impact"]["amount_minor"], 1250)
+        inserted_outbox_event = client.table.return_value.insert.call_args_list[1].args[0]
+        self.assertEqual(inserted_outbox_event["event_type"], "approval.created")
+
+    def test_customer_agent_registers_agentcard_checkout_when_enabled(self) -> None:
+        with patch(
+            "src.agent.runtime.get_supabase_settings",
+            return_value=SimpleNamespace(agentcard_enabled=True),
+        ), patch("src.agent.runtime.get_memory_config", return_value=None):
+            agent = build_business_agent(
+                client=ProductClient(),
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store", "country": "US", "currency": "USD"},
+                agent_config={
+                    "permissions": {
+                        "create_carts_and_orders": True,
+                        "create_paypal_checkout": True,
+                    }
+                },
+                history=[],
+                audience="customer",
+                conversation_id="conversation-a",
+                idempotency_key="website:message-a",
+                created_checkout_urls=[],
+            )
+
+        self.assertIn("create_agentcard_transaction", agent.tool_registry.registry)
 
     def test_customer_memory_tools_are_not_registered_without_opt_in(self) -> None:
         with (
@@ -290,20 +393,55 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(query, "shoes")
 
-    def test_product_image_delivery_is_confirmed_only_after_attachment_exists(self) -> None:
+    def test_product_images_are_only_attached_when_explicitly_requested(self) -> None:
         product = {
             "name": "Canvas bag",
             "image_urls": ["https://storage.example/photo.png"],
         }
-        attachments = product_image_attachments(
-            [product],
-            "The Canvas bag is a good choice.",
-            explicitly_requested=False,
+        self.assertEqual(
+            product_image_attachments(
+                [product],
+                explicitly_requested=False,
+            ),
+            [],
         )
+        attachments = product_image_attachments([product], explicitly_requested=True)
         self.assertEqual(attachments[0]["alt"], "Canvas bag")
-        self.assertIn("included a photo", product_image_reply("Recommended.", attachments, explicitly_requested=False))
-        self.assertIn("couldn't send", product_image_reply("Recommended.", [], explicitly_requested=True, delivery_failed=True))
-        self.assertIn("couldn't find", product_image_reply("Recommended.", [], explicitly_requested=True))
+        self.assertIn(
+            "couldn't send",
+            product_image_reply(
+                "Recommended.", [], explicitly_requested=True, delivery_failed=True
+            ),
+        )
+        self.assertIn(
+            "couldn't find",
+            product_image_reply("Recommended.", [], explicitly_requested=True),
+        )
+
+    def test_checkout_link_is_appended_once_after_customer_response(self) -> None:
+        url = "https://getreactant.vercel.app/checkout/example"
+
+        self.assertEqual(
+            include_secure_checkout_link("Your checkout is ready.", [url]),
+            f"Your checkout is ready.\n\nSecure checkout: {url}",
+        )
+        self.assertEqual(
+            include_secure_checkout_link(f"Secure checkout: {url}", [url]),
+            f"Secure checkout: {url}",
+        )
+
+    def test_customer_prompt_does_not_allow_unsolicited_product_photos(self) -> None:
+        prompt = build_business_system_prompt(
+            business={"name": "Store"},
+            agent_config=None,
+            audience="customer",
+        )
+
+        self.assertIn("Do not send product photos", prompt)
+        self.assertIn(
+            "image availability alone is not a reason to send one",
+            prompt,
+        )
 
     def test_customer_catalog_result_does_not_expose_internal_product_id_or_image_url(self) -> None:
         result = customer_catalog_product(

@@ -172,11 +172,6 @@ export type TelegramSetup = {
   bot_name: string
 }
 
-export type PayPalWebhookSetup = {
-  webhook_url: string
-  configured: boolean
-}
-
 export type AgentConfig = {
   enabled: boolean
   status: string

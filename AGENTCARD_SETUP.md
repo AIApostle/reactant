@@ -129,13 +129,15 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
    routed to that seller's email; PayPal sends the seller an onboarding email.
    The seller must finish onboarding within 30 days. Until then, payment status
    can remain pending and refunds are unavailable.
-4. Choose **Webhook setup**. In the corresponding Sandbox REST app, create a
-   webhook for the exact URL Reactant displays. Subscribe to
+4. In the corresponding Sandbox REST app, create a webhook for
+   `https://reactant.onrender.com/webhooks/paypal/<integration-id>`. Subscribe to
    `MERCHANT.ONBOARDING.COMPLETED`, `MERCHANT.PARTNER-CONSENT.REVOKED`,
    `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`,
    `PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.DENIED`,
    `PAYMENT.CAPTURE.REFUNDED`, and
-   `CHECKOUT.PAYMENT-APPROVAL.REVERSED`. Save the webhook ID in Reactant.
+   `CHECKOUT.PAYMENT-APPROVAL.REVERSED`. Store the returned webhook ID in the
+   Render backend's `PAYPAL_WEBHOOK_IDS` JSON object, keyed by the integration
+   ID in that URL. Webhook IDs are not entered or displayed in the frontend.
 5. Test with a Sandbox buyer and a Sandbox seller business account. Funds are
    routed to the business seller, not Reactant. A seller who doesn't complete
    onboarding within 30 days has the pending payment returned to the buyer.
@@ -148,13 +150,15 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
    Enable **Visible to agent** for that product.
 3. Connect Telegram (or another supported customer channel), then connect the
    business PayPal seller account as described above.
-4. In **Business agent**, enable the agent, **Build carts and prepare orders**,
-   and **Create PayPal checkout links**. Save the settings.
+4. In **Business agent**, enable the agent and **Prepare AgentCard checkout**.
+   This permission enables both cart validation and secure checkout links. Save
+   the settings.
 5. Keep order approvals configured according to the test you want to run. If
    approval is required, an owner/admin must approve the request before
    checkout can proceed.
-6. Confirm Integrations shows the PayPal connection and that the webhook ID is
-   saved. Never use Live PayPal credentials for Sandbox testing.
+6. Confirm Integrations shows the PayPal connection and that the matching
+   webhook ID is configured in the Render backend environment. Never use Live
+   PayPal credentials for Sandbox testing.
 
 ## Run a complete Sandbox purchase
 
@@ -201,7 +205,8 @@ states.
 ## What to verify
 
 - The PayPal integration reports **Connected** after its credential test.
-- The webhook setup panel reports the webhook ID saved.
+- The backend `PAYPAL_WEBHOOK_IDS` value includes the PayPal integration ID and
+  matching webhook ID.
 - The customer checkout displays a server-calculated immutable order snapshot
   and requires explicit consent.
 - `PAYMENT.CAPTURE.COMPLETED` has a valid PayPal signature and its amount,
@@ -227,9 +232,9 @@ request with the same idempotency key.
 - **PayPal partner app is not configured:** check Render's backend-only
   `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET_KEY`, `PAYPAL_PARTNER_ATTRIBUTION_ID`,
   and API URL. Never ask a business to enter these app credentials.
-- **Webhook verification is not configured:** confirm the webhook ID belongs
-  to the same PayPal REST app and that the webhook is registered to the exact
-  URL shown in Integrations.
+- **Webhook verification is not configured:** confirm `PAYPAL_WEBHOOK_IDS` maps
+  the PayPal integration ID to the webhook ID registered for that exact URL and
+  REST app.
 - **Payment remains pending or reconciliation:** do not retry payment with a
   new checkout. Check PayPal Sandbox activity and Render logs; the backend
   worker also reconciles unfinished payment attempts.

@@ -24,8 +24,6 @@ from src.schemas.integrations import (
     IntegrationCreate,
     IntegrationAuthorizationResponse,
     IntegrationResponse,
-    PayPalWebhookConfigurationRequest,
-    PayPalWebhookSetupResponse,
     TelegramSetupResponse,
 )
 from src.supabase.client import get_user_supabase_client, get_supabase_settings
@@ -247,17 +245,6 @@ def _telegram_setup(request: Request, integration_id: UUID) -> tuple[str, str]:
     return f"{base_url}/webhooks/telegram/{integration_id}", base_url
 
 
-def _paypal_webhook_url(request: Request, integration_id: UUID) -> str:
-    settings = get_supabase_settings()
-    base_url = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
-    if not base_url.startswith("https://"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "public_url_unavailable", "message": "Set PUBLIC_API_BASE_URL to an HTTPS backend URL before configuring PayPal webhooks."},
-        )
-    return f"{base_url}/webhooks/paypal/{integration_id}"
-
-
 @overload
 def _telegram_api(
     bot_token: str,
@@ -427,109 +414,11 @@ def create_integration(
         }
         if include_origin:
             values["allowed_origin"] = credentials.get("allowed_origin")
-        if credentials.get("webhook_id"):
-            values["webhook_id"] = credentials["webhook_id"]
         return client.table("integrations").insert(values).select(fields).single()
 
     integration = _execute_integration_query(create_query)
     return ResourceEnvelope(
         data=IntegrationResponse(**integration),
-        request_id=request.state.request_id,
-    )
-
-
-@router.get(
-    "/businesses/{business_id}/integrations/{integration_id}/paypal-webhook",
-    response_model=ResourceEnvelope[PayPalWebhookSetupResponse],
-)
-def get_paypal_webhook_setup(
-    business_id: UUID,
-    integration_id: UUID,
-    request: Request,
-    user: User,
-    client: Database,
-) -> ResourceEnvelope[PayPalWebhookSetupResponse]:
-    membership = get_business_membership(client, business_id, user.id)
-    require_role(membership, {"owner", "admin"})
-    integration = execute(
-        client.table("integrations")
-        .select("id,provider,credentials_ciphertext")
-        .eq("business_id", str(business_id))
-        .eq("id", str(integration_id))
-        .maybe_single()
-    )
-    if not integration or integration["provider"] != "paypal":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "The PayPal integration was not found."},
-        )
-    credentials = _decrypt_credentials(integration["credentials_ciphertext"])
-    return ResourceEnvelope(
-        data=PayPalWebhookSetupResponse(
-            webhook_url=_paypal_webhook_url(request, integration_id),
-            configured=bool(credentials.get("webhook_id")),
-        ),
-        request_id=request.state.request_id,
-    )
-
-
-@router.put(
-    "/businesses/{business_id}/integrations/{integration_id}/paypal-webhook",
-    response_model=ResourceEnvelope[PayPalWebhookSetupResponse],
-)
-def configure_paypal_webhook(
-    business_id: UUID,
-    integration_id: UUID,
-    body: PayPalWebhookConfigurationRequest,
-    request: Request,
-    user: User,
-    client: Database,
-) -> ResourceEnvelope[PayPalWebhookSetupResponse]:
-    webhook_id = body.webhook_id.strip()
-    if not webhook_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "validation_error", "message": "Enter the PayPal webhook ID."},
-        )
-    membership = get_business_membership(client, business_id, user.id)
-    require_role(membership, {"owner", "admin"})
-    integration = execute(
-        client.table("integrations")
-        .select("id,provider,credentials_ciphertext")
-        .eq("business_id", str(business_id))
-        .eq("id", str(integration_id))
-        .maybe_single()
-    )
-    if not integration or integration["provider"] != "paypal":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "The PayPal integration was not found."},
-        )
-    credentials = _decrypt_credentials(integration["credentials_ciphertext"])
-    credentials["webhook_id"] = webhook_id
-    encryption_key = get_supabase_settings().credentials_encryption_key
-    if encryption_key is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "credential_encryption_unavailable", "message": "Integration credentials could not be stored securely."},
-        )
-    ciphertext = Fernet(encryption_key.get_secret_value().encode()).encrypt(
-        json.dumps(credentials, separators=(",", ":"), sort_keys=True).encode()
-    ).decode()
-    execute(
-        client.table("integrations")
-        .update({
-            "credentials_ciphertext": ciphertext,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
-        .eq("business_id", str(business_id))
-        .eq("id", str(integration_id))
-    )
-    return ResourceEnvelope(
-        data=PayPalWebhookSetupResponse(
-            webhook_url=_paypal_webhook_url(request, integration_id),
-            configured=True,
-        ),
         request_id=request.state.request_id,
     )
 

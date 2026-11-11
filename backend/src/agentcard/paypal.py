@@ -135,11 +135,6 @@ def paypal_credentials(
         **platform_credentials,
         "seller_paypal_email": seller_paypal_email,
         "seller_onboarding_status": integration.get("sync_status", ""),
-        **(
-            {"webhook_id": credentials["webhook_id"]}
-            if isinstance(credentials.get("webhook_id"), str)
-            else {}
-        ),
     }
 
 

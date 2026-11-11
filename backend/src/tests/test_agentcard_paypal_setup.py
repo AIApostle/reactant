@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -13,6 +14,23 @@ from src.supabase.client import SupabaseSettings
 
 
 class AgentCardPayPalSetupTests(unittest.TestCase):
+    def test_paypal_webhook_ids_are_loaded_as_backend_integration_mapping(self) -> None:
+        integration_id = "9f4ba75f-1b62-486c-bb27-61f7ad5e216f"
+        webhook_id = "78D87609FU9964315"
+        with patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_PERISHABLE_KEY": "test-key",
+                "PAYPAL_WEBHOOK_IDS": json.dumps({integration_id: webhook_id}),
+            },
+            clear=True,
+        ):
+            settings = SupabaseSettings(_env_file=None)
+
+        self.assertEqual(settings.paypal_webhook_ids[integration_id], webhook_id)
+        self.assertNotIn("another-integration", settings.paypal_webhook_ids)
+
     def test_existing_bn_code_environment_variable_is_supported(self) -> None:
         with patch.dict(
             os.environ,

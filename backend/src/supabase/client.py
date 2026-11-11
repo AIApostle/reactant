@@ -49,6 +49,10 @@ class SupabaseSettings(BaseSettings):
             "PAYPAL_BN_CODE",
         ),
     )
+    paypal_webhook_ids: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias="PAYPAL_WEBHOOK_IDS",
+    )
     memwal_delegate_key: SecretStr | None = None
     memwal_account_id: str | None = None
     memwal_server_url: str | None = None

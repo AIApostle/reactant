@@ -27,6 +27,7 @@ from src.agent.customer_images import (
 )
 from src.agent.runtime import (
     build_business_agent,
+    include_secure_checkout_link,
     find_business_products,
     invoke_business_agent,
     product_image_attachments,
@@ -740,15 +741,10 @@ def _process_telegram_update(
                 image_products = matching_products
     image_attachments = product_image_attachments(
         image_products,
-        response_text,
         explicitly_requested=image_requested,
     )
     sent_image_attachments: list[dict[str, str]] = []
     image_delivery_failed = False
-    if created_checkout_urls:
-        response_text = (
-            f"{response_text}\n\nSecure checkout: {created_checkout_urls[-1]}"
-        )
     for attachment in image_attachments:
         try:
             _telegram_send_photo(
@@ -771,6 +767,10 @@ def _process_telegram_update(
         sent_image_attachments,
         explicitly_requested=image_requested,
         delivery_failed=image_delivery_failed,
+    )
+    response_text = include_secure_checkout_link(
+        response_text,
+        created_checkout_urls,
     )
     _telegram_send_message(credentials["bot_token"], chat_id, response_text)
     execute(
@@ -968,7 +968,7 @@ async def receive_paypal_webhook(
     credentials, business_id = await asyncio.to_thread(
         _integration_credentials, client, integration_id, "paypal"
     )
-    webhook_id = credentials.get("webhook_id")
+    webhook_id = get_supabase_settings().paypal_webhook_ids.get(str(integration_id))
     if credentials.get("mode") != "partner_after_payment":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

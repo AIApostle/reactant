@@ -26,6 +26,7 @@ from src.agent.customer_images import (
 )
 from src.agent.runtime import (
     build_business_agent,
+    include_secure_checkout_link,
     find_business_products,
     invoke_business_agent,
     product_image_attachments,
@@ -254,6 +255,7 @@ def _process_widget_message(
         )
         return
     selected_product_images: list[dict[str, Any]] = []
+    created_checkout_urls: list[str] = []
     agent = build_business_agent(
         client=client,
         business_id=business_id,
@@ -273,7 +275,7 @@ def _process_widget_message(
         customer_name="Website visitor",
         customer_reference=str(claims["visitor_id"]),
         idempotency_key=f"website:{message_id}",
-        created_checkout_urls=[],
+        created_checkout_urls=created_checkout_urls,
         selected_product_images=selected_product_images,
         vision_enabled=bool(images),
     )
@@ -293,13 +295,16 @@ def _process_widget_message(
                 image_products = matching_products
     attachments = product_image_attachments(
         image_products,
-        response_text,
         explicitly_requested=explicitly_requested,
     )
     response_text = product_image_reply(
         response_text,
         attachments,
         explicitly_requested=explicitly_requested,
+    )
+    response_text = include_secure_checkout_link(
+        response_text,
+        created_checkout_urls,
     )
 
     _save_widget_agent_message(

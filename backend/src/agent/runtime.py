@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 from typing import Any
@@ -150,16 +151,16 @@ def product_image_query(text: str, history: list[dict[str, Any]]) -> str:
 
 def product_image_attachments(
     products: list[dict[str, Any]],
-    response: str,
     *,
     explicitly_requested: bool,
 ) -> list[dict[str, str]]:
+    if not explicitly_requested:
+        return []
+
     attachments: list[dict[str, str]] = []
     for product in products:
         name = product.get("name")
-        if not isinstance(name, str) or (
-            not explicitly_requested and name.casefold() not in response.casefold()
-        ):
+        if not isinstance(name, str):
             continue
         image_urls = product.get("image_urls")
         if not isinstance(image_urls, list):
@@ -194,6 +195,18 @@ def product_image_reply(
     if delivery_failed:
         return f"{response.rstrip()}\n\nI couldn't send the product photo just now."
     return response
+
+
+def include_secure_checkout_link(
+    response: str,
+    checkout_urls: list[str],
+) -> str:
+    if not checkout_urls:
+        return response
+    checkout_url = checkout_urls[-1]
+    if checkout_url in response:
+        return response
+    return f"{response.rstrip()}\n\nSecure checkout: {checkout_url}"
 
 
 def find_business_products(
@@ -302,6 +315,7 @@ def build_business_agent(
     customer_name: str = "Customer",
     customer_reference: str = "",
     idempotency_key: str | None = None,
+    agent_run_id: str | None = None,
     created_checkout_urls: list[str] | None = None,
     selected_product_images: list[dict[str, Any]] | None = None,
     vision_enabled: bool = False,
@@ -310,7 +324,7 @@ def build_business_agent(
 
     @tool
     def search_business_products(query: str, limit: int = 5) -> list[dict[str, Any]]:
-        """Find active catalog products by name. Product IDs are internal and must never be shown to customers. When customer-facing photos are available, the channel can send them with the reply."""
+        """Find active catalog products by name. Product IDs are internal and must never be shown to customers. The channel sends product photos only when the customer explicitly asks to see one."""
         products = find_business_products(client, business_id, query, limit)
         if audience == "customer":
             for product in products:
@@ -359,6 +373,94 @@ def build_business_agent(
             return {"status": "saved"}
 
         tools.extend([search_business_memory, remember_business_fact])
+    if audience == "owner" and agent_run_id is not None:
+        @tool
+        def create_approval_request(
+            action_type: str,
+            summary: str,
+            amount_minor: int | None = None,
+            currency: str | None = None,
+            customer_name: str | None = None,
+            order_id: str | None = None,
+        ) -> dict[str, Any]:
+            """Create a pending approval request only when an authorized team member explicitly asks. This records a review request; approval does not perform the action."""
+            normalized_action = re.sub(r"[^a-z0-9_]+", "_", action_type.strip().lower()).strip("_")
+            normalized_summary = summary.strip()
+            if not normalized_action or len(normalized_action) > 120:
+                raise ValueError("Provide a short action type for the approval request.")
+            if not normalized_summary or len(normalized_summary) > 2000:
+                raise ValueError("Provide an approval summary of 1 to 2000 characters.")
+            if amount_minor is not None and amount_minor < 0:
+                raise ValueError("Approval amounts cannot be negative.")
+            normalized_currency = currency.strip().upper() if currency else None
+            if normalized_currency is not None and not re.fullmatch(
+                r"[A-Z]{3}", normalized_currency
+            ):
+                raise ValueError("Provide a valid three-letter currency code.")
+
+            impact: dict[str, Any] = {"summary": normalized_summary}
+            if amount_minor is not None:
+                impact["amount_minor"] = amount_minor
+            if normalized_currency is not None:
+                impact["currency"] = normalized_currency
+            if customer_name and customer_name.strip():
+                impact["customer_name"] = customer_name.strip()[:160]
+            if order_id and order_id.strip():
+                impact["order_id"] = order_id.strip()[:120]
+
+            payload_hash = hashlib.sha256(
+                f"{normalized_action}\n{normalized_summary}\n{impact}".encode()
+            ).hexdigest()
+            request_key = f"owner-agent:{agent_run_id}:{payload_hash}"
+            existing = execute(
+                client.table("approvals")
+                .select("id,status,action_type,impact")
+                .eq("business_id", business_id)
+                .eq("request_idempotency_key", request_key)
+                .maybe_single()
+            )
+            if existing is None:
+                approval = execute(
+                    client.table("approvals")
+                    .insert(
+                        {
+                            "business_id": business_id,
+                            "action_type": normalized_action,
+                            "status": "pending",
+                            "impact": impact,
+                            "expires_at": None,
+                            "requested_by": "business_agent",
+                            "request_idempotency_key": request_key,
+                        }
+                    )
+                    .select("id,status,action_type,impact")
+                    .single()
+                )
+                if not isinstance(approval, dict):
+                    raise RuntimeError("The approval request could not be created.")
+                execute(
+                    client.table("outbox_events").insert(
+                        {
+                            "business_id": business_id,
+                            "event_type": "approval.created",
+                            "topic": "approvals",
+                            "data": {"approval_id": approval["id"]},
+                            "dedupe_key": f"approval-created:{approval['id']}",
+                        }
+                    )
+                )
+            else:
+                approval = existing
+
+            return {
+                "approval_id": approval["id"],
+                "status": approval["status"],
+                "action_type": approval["action_type"],
+                "summary": approval["impact"].get("summary", normalized_summary),
+                "message": "Approval request is queued for human review. Approval does not execute the action.",
+            }
+
+        tools.append(create_approval_request)
     if (
         audience == "customer"
         and get_supabase_settings().agentcard_enabled
