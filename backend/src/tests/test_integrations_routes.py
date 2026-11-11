@@ -8,6 +8,7 @@ from src.integrations.routes import (
     BASE_VISIBLE_FIELDS,
     VISIBLE_FIELDS,
     _execute_integration_query,
+    _telegram_api,
 )
 
 
@@ -62,6 +63,31 @@ class IntegrationSchemaCompatibilityTests(unittest.TestCase):
                 )
 
         mocked_execute.assert_called_once()
+
+
+class TelegramApiResponseTests(unittest.TestCase):
+    @patch("src.integrations.routes.httpx.post")
+    def test_accepts_telegram_set_webhook_boolean_result(self, post) -> None:
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = {"ok": True, "result": True}
+
+        result = _telegram_api("bot-token", "setWebhook", {"url": "https://example.test"})
+
+        self.assertIs(result, True)
+
+    @patch("src.integrations.routes.httpx.post")
+    def test_rejects_malformed_get_me_result(self, post) -> None:
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = {"ok": True, "result": True}
+
+        with self.assertRaises(HTTPException) as raised:
+            _telegram_api("bot-token", "getMe", {})
+
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(
+            raised.exception.detail["code"],
+            "telegram_invalid_response",
+        )
 
 
 if __name__ == "__main__":

@@ -110,12 +110,14 @@ backend-only and are loaded from `backend/.env`.
     if it has not already been applied.
 8. Apply `backend/src/supabase/migrations/0007_sync_agent_status.sql` to
     reconcile existing agent status values with their enabled setting.
-9. Enable email/password Auth.
-10. For local testing, keep email confirmation disabled or use confirmed test
-   users.
-11. Confirm the private `product-media`, `agentcard-receipts`, and
-   `customer-chat-media` buckets exist; migrations 0003 and 0005 create the
-   AgentCard and customer image buckets.
+9. Apply `backend/src/supabase/migrations/0008_owner_telegram_channel.sql` to
+    enable verified owner-to-agent messaging and Telegram approval commands.
+10. Enable email/password Auth.
+11. For local testing, keep email confirmation disabled or use confirmed test
+    users.
+12. Confirm the private `product-media`, `agentcard-receipts`, and
+    `customer-chat-media` buckets exist; migrations 0003 and 0005 create the
+    AgentCard and customer image buckets.
 
 The frontend must use only the public Supabase URL and publishable/anon key.
 
@@ -166,6 +168,10 @@ Required testing outcomes:
 - The conversation is associated with the correct business.
 - Outbound replies and payment receipts are sent by the backend using the
   stored bot token.
+- An owner can create a single-use pairing code in **Agent messages**, send
+  `/pair <code>` to the connected bot in a private chat, and then message the
+  owner agent or reply `/approve <approval-id>` or `/reject <approval-id>`.
+  Pairing codes expire after ten minutes.
 
 ## 5. Prepare PayPal Sandbox
 

@@ -51,6 +51,18 @@ class OwnerAssistantStatusResponse(RequestModel):
     ]
 
 
+class OwnerTelegramChannelStatusResponse(RequestModel):
+    telegram_connected: bool
+    paired: bool
+    paired_at: datetime | None
+
+
+class OwnerTelegramPairingResponse(RequestModel):
+    pairing_code: str
+    bot_username: str = Field(min_length=1, max_length=64)
+    expires_at: datetime
+
+
 class OwnerMessageAccepted(RequestModel):
     message: OwnerMessageResponse
     agent_run_id: UUID

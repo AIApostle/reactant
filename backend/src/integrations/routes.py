@@ -2,7 +2,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any, Callable, Literal, overload
 from uuid import UUID
 from urllib.parse import urlencode, urlparse
 
@@ -228,11 +228,27 @@ def _paypal_webhook_url(request: Request, integration_id: UUID) -> str:
     return f"{base_url}/webhooks/paypal/{integration_id}"
 
 
+@overload
+def _telegram_api(
+    bot_token: str,
+    method: Literal["getMe"],
+    payload: dict[str, object],
+) -> dict[str, object]: ...
+
+
+@overload
+def _telegram_api(
+    bot_token: str,
+    method: Literal["setWebhook"],
+    payload: dict[str, object],
+) -> bool: ...
+
+
 def _telegram_api(
     bot_token: str,
     method: str,
     payload: dict[str, object],
-) -> dict[str, object]:
+) -> dict[str, object] | bool:
     try:
         response = httpx.post(
             f"https://api.telegram.org/bot{bot_token}/{method}",
@@ -274,12 +290,14 @@ def _telegram_api(
             detail={"code": "telegram_request_rejected", "message": f"Telegram rejected the {method} request. Check the bot token and webhook settings."},
         )
     data = result.get("result")
-    if not isinstance(data, dict):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "telegram_invalid_response", "message": "Telegram returned an invalid response."},
-        )
-    return data
+    if method == "getMe" and isinstance(data, dict):
+        return data
+    if method == "setWebhook" and data is True:
+        return True
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail={"code": "telegram_invalid_response", "message": "Telegram returned an invalid response."},
+    )
 
 
 @router.get(

@@ -1,5 +1,8 @@
+import hashlib
 import hmac
-from datetime import datetime, timezone
+import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -19,6 +22,8 @@ from src.schemas.owner_assistant import (
     OwnerMessageResponse,
     OwnerThreadResponse,
     OwnerAssistantStatusResponse,
+    OwnerTelegramChannelStatusResponse,
+    OwnerTelegramPairingResponse,
 )
 from src.supabase.client import (
     get_service_supabase_client,
@@ -31,10 +36,13 @@ from src.supabase.repository import (
     paginated_rows,
     require_role,
 )
+from src.integrations.routes import _decrypt_credentials, _telegram_api
+from src.webhooks.routes import _integration_credentials, _telegram_send_long_message
 
 
 router = APIRouter()
 service_router = APIRouter()
+logger = logging.getLogger(__name__)
 User = Annotated[AuthenticatedUser, Depends(get_current_user)]
 Database = Annotated[Client, Depends(get_user_supabase_client)]
 Bearer = HTTPBearer(auto_error=False)
@@ -80,6 +88,150 @@ def _owner_thread(
             detail={"code": "database_unavailable", "message": "The request could not be completed right now."},
         )
     return row
+
+
+def _connected_telegram_integration(client: Client, business_id: UUID) -> dict[str, Any]:
+    integration = execute(
+        client.table("integrations")
+        .select("id,credentials_ciphertext")
+        .eq("business_id", str(business_id))
+        .eq("provider", "telegram")
+        .eq("status", "connected")
+        .order("created_at", desc=True)
+        .limit(1)
+    )
+    if not integration:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "telegram_not_connected", "message": "Connect Telegram before pairing an owner channel."},
+        )
+    return integration[0]
+
+
+@router.get(
+    "/businesses/{business_id}/owner-assistant/telegram",
+    response_model=ResourceEnvelope[OwnerTelegramChannelStatusResponse],
+)
+def get_owner_telegram_channel_status(
+    business_id: UUID,
+    request: Request,
+    user: User,
+    client: Database,
+    service_client: ServiceDatabase,
+) -> ResourceEnvelope[OwnerTelegramChannelStatusResponse]:
+    membership = get_business_membership(client, business_id, user.id)
+    require_role(membership, {"owner"})
+    integrations = execute(
+        client.table("integrations")
+        .select("id")
+        .eq("business_id", str(business_id))
+        .eq("provider", "telegram")
+        .eq("status", "connected")
+        .order("created_at", desc=True)
+        .limit(1)
+    )
+    if not integrations:
+        return ResourceEnvelope(
+            data=OwnerTelegramChannelStatusResponse(
+                telegram_connected=False,
+                paired=False,
+                paired_at=None,
+            ),
+            request_id=request.state.request_id,
+        )
+    integration = integrations[0]
+    channel = execute(
+        service_client.table("owner_telegram_channels")
+        .select("telegram_chat_id,paired_at")
+        .eq("business_id", str(business_id))
+        .eq("integration_id", integration["id"])
+        .eq("owner_user_id", str(user.id))
+        .maybe_single()
+    )
+    paired_at = channel.get("paired_at") if channel and channel.get("telegram_chat_id") else None
+    return ResourceEnvelope(
+        data=OwnerTelegramChannelStatusResponse(
+            telegram_connected=True,
+            paired=paired_at is not None,
+            paired_at=paired_at,
+        ),
+        request_id=request.state.request_id,
+    )
+
+
+@router.post(
+    "/businesses/{business_id}/owner-assistant/telegram/pairing",
+    response_model=ResourceEnvelope[OwnerTelegramPairingResponse],
+)
+def create_owner_telegram_pairing(
+    business_id: UUID,
+    request: Request,
+    user: User,
+    client: Database,
+    service_client: ServiceDatabase,
+) -> ResourceEnvelope[OwnerTelegramPairingResponse]:
+    membership = get_business_membership(client, business_id, user.id)
+    require_role(membership, {"owner"})
+    integration = _connected_telegram_integration(client, business_id)
+    credentials = _decrypt_credentials(integration["credentials_ciphertext"])
+    bot_token = credentials.get("bot_token")
+    if not isinstance(bot_token, str):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "telegram_credentials_unavailable", "message": "Telegram credentials could not be read."},
+        )
+    bot = _telegram_api(bot_token, "getMe", {})
+    bot_username = bot.get("username")
+    if not isinstance(bot_username, str) or not bot_username.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "telegram_bot_unavailable", "message": "The connected Telegram bot has no username."},
+        )
+
+    pairing_code = secrets.token_urlsafe(24)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    execute(
+        service_client.table("owner_telegram_channels").upsert(
+            {
+                "business_id": str(business_id),
+                "integration_id": integration["id"],
+                "owner_user_id": str(user.id),
+                "telegram_chat_id": None,
+                "paired_at": None,
+                "pairing_token_hash": hashlib.sha256(pairing_code.encode()).hexdigest(),
+                "pairing_expires_at": expires_at.isoformat(),
+            },
+            on_conflict="business_id",
+        )
+    )
+    return ResourceEnvelope(
+        data=OwnerTelegramPairingResponse(
+            pairing_code=pairing_code,
+            bot_username=bot_username,
+            expires_at=expires_at,
+        ),
+        request_id=request.state.request_id,
+    )
+
+
+@router.delete(
+    "/businesses/{business_id}/owner-assistant/telegram",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def disconnect_owner_telegram_channel(
+    business_id: UUID,
+    user: User,
+    client: Database,
+    service_client: ServiceDatabase,
+) -> None:
+    membership = get_business_membership(client, business_id, user.id)
+    require_role(membership, {"owner"})
+    execute(
+        service_client.table("owner_telegram_channels")
+        .delete()
+        .eq("business_id", str(business_id))
+        .eq("owner_user_id", str(user.id))
+    )
 
 
 @router.get(
@@ -320,6 +472,56 @@ def _require_service_token(
         )
 
 
+def _notify_paired_telegram_owner(
+    client: Client,
+    business_id: UUID,
+    message: dict[str, Any],
+) -> None:
+    try:
+        channel = execute(
+            client.table("owner_telegram_channels")
+            .select("integration_id,telegram_chat_id,paired_at")
+            .eq("business_id", str(business_id))
+            .maybe_single()
+        )
+        if not channel or not channel.get("telegram_chat_id") or not channel.get("paired_at"):
+            return
+        integration = execute(
+            client.table("integrations")
+            .select("id")
+            .eq("business_id", str(business_id))
+            .eq("id", channel["integration_id"])
+            .eq("provider", "telegram")
+            .eq("status", "connected")
+            .maybe_single()
+        )
+        if not integration:
+            return
+        credentials, resolved_business_id = _integration_credentials(
+            client,
+            UUID(integration["id"]),
+            "telegram",
+        )
+        bot_token = credentials.get("bot_token")
+        if resolved_business_id != business_id or not isinstance(bot_token, str):
+            logger.error("Paired Telegram owner notification is missing valid bot credentials business_id=%s", business_id)
+            return
+        text = str(message["text"])
+        if message.get("kind") == "approval_request" and message.get("approval_id"):
+            text = (
+                f"{text}\n\nReply with:\n"
+                f"/approve {message['approval_id']}\n"
+                f"/reject {message['approval_id']}"
+            )
+        _telegram_send_long_message(bot_token, str(channel["telegram_chat_id"]), text)
+    except (HTTPException, RuntimeError) as error:
+        logger.warning(
+            "Paired Telegram owner notification failed business_id=%s exception_type=%s",
+            business_id,
+            type(error).__name__,
+        )
+
+
 @service_router.post(
     "/businesses/{business_id}/owner-assistant/messages",
     status_code=status.HTTP_201_CREATED,
@@ -394,7 +596,8 @@ def create_agent_owner_message(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "idempotency_conflict", "message": "The idempotency key has already been used."},
         )
-    if existing is None:
+    is_new_message = existing is None
+    if is_new_message:
         existing = execute(
             client.table("owner_messages")
             .insert(
@@ -434,6 +637,8 @@ def create_agent_owner_message(
                 }
             )
         )
+    if is_new_message:
+        _notify_paired_telegram_owner(client, business_id, existing)
     return ResourceEnvelope(
         data=OwnerMessageResponse(**existing),
         request_id=request.state.request_id,

@@ -115,7 +115,25 @@ type Conversation = {
   time: string
   status: ConversationStatus
   unread: boolean
-  messages: { from: 'customer' | 'agent' | 'staff'; text: string; time: string }[]
+  messages: ConversationMessage[]
+}
+
+type ConversationMessageAttachment = { type: 'image'; url: string; alt: string; source_index?: number }
+type ConversationMessage = {
+  id: string
+  from: 'customer' | 'agent' | 'staff'
+  text: string
+  time: string
+  deliveryStatus: 'queued' | 'sent' | 'failed'
+  attachments: ConversationMessageAttachment[]
+}
+type ReplyAttachment = {
+  source: 'catalog' | 'conversation'
+  product_id?: string
+  message_id?: string
+  image_index: number
+  url: string
+  alt: string
 }
 
 function ownerMessageContent(text: string) {
@@ -173,6 +191,15 @@ type ConversationApi = {
   last_message?: { text: string; created_at: string } | null
   unread?: boolean
   updated_at: string
+}
+
+type CustomerMessageApi = {
+  id: string
+  sender_type: 'customer' | 'agent' | 'staff'
+  text: string
+  created_at: string
+  delivery_status: 'queued' | 'sent' | 'failed'
+  attachments?: ConversationMessageAttachment[]
 }
 
 type OrderApi = {
@@ -259,6 +286,17 @@ function mapConversation(item: ConversationApi): Conversation {
   }
 }
 
+function mapConversationMessage(message: CustomerMessageApi): ConversationMessage {
+  return {
+    id: message.id,
+    from: message.sender_type,
+    text: message.text,
+    time: displayTime(message.created_at),
+    deliveryStatus: message.delivery_status,
+    attachments: message.attachments ?? [],
+  }
+}
+
 function mapOrder(item: OrderApi): Order {
   const name = item.customer_name
   const status: Order['status'] = item.status === 'cancelled'
@@ -318,6 +356,8 @@ function App() {
   const selectedConversationRef = useRef('')
   const [orders, setOrders] = useState<Order[]>([])
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([])
+  const [replyProducts, setReplyProducts] = useState<CatalogProduct[]>([])
+  const [replyProductsBusinessId, setReplyProductsBusinessId] = useState('')
   const catalogRevision = useRef(0)
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
@@ -339,6 +379,8 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [reply, setReply] = useState('')
+  const [replyAttachments, setReplyAttachments] = useState<ReplyAttachment[]>([])
+  const [replySending, setReplySending] = useState(false)
   const [toast, setToast] = useState('')
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('All')
   const [orderFilter, setOrderFilter] = useState('All orders')
@@ -431,6 +473,13 @@ function App() {
         if (rows[0]) setSelectedConversation((current) => current || rows[0].id)
       })
       requests.push(loadConversations().catch((reason: unknown) => recordFailure('Conversations', reason)))
+      requests.push(apiRequest<ProductApi[]>(businessPath(businessId, '/products?limit=100'))
+        .then((rows) => {
+          if (active) {
+            setReplyProducts(rows.map((product) => mapCatalogProduct(product)))
+            setReplyProductsBusinessId(businessId)
+          }
+        }).catch((reason: unknown) => recordFailure('Catalog images', reason)))
     }
     if (page === 'catalog') {
       requests.push(apiRequest<ProductApi[]>(businessPath(business.id, '/products?limit=100'))
@@ -496,7 +545,7 @@ function App() {
             if (!message.type?.startsWith('conversation.')) return
             const conversationId = message.data?.conversation_id
             if (conversationId && conversationId === selectedConversationRef.current) {
-              void apiRequest<{ sender_type: 'customer' | 'agent' | 'staff'; text: string; created_at: string }[]>(
+              void apiRequest<CustomerMessageApi[]>(
                 businessPath(businessId, `/conversations/${conversationId}/messages?limit=100`),
                 { cache: 'no-store' },
               ).then((messages) => {
@@ -504,11 +553,7 @@ function App() {
                 setConversations((items) => items.map((item) => item.id === conversationId
                   ? {
                       ...item,
-                      messages: messages.map((conversationMessage) => ({
-                        from: conversationMessage.sender_type,
-                        text: conversationMessage.text,
-                        time: displayTime(conversationMessage.created_at),
-                      })),
+                      messages: messages.map(mapConversationMessage),
                     }
                   : item))
               }).catch(() => undefined)
@@ -575,23 +620,46 @@ function App() {
 
   async function sendReply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!reply.trim() || !business || !selectedConversation) return
+    if ((!reply.trim() && !replyAttachments.length) || !business || !selectedConversation || replySending) return
+    setReplySending(true)
     try {
-      const message = await apiRequest<{ sender_type: 'customer' | 'agent' | 'staff'; text: string; created_at: string }>(
+      const message = await apiRequest<CustomerMessageApi>(
         businessPath(business.id, `/conversations/${selectedConversation}/messages`),
         {
           method: 'POST',
           headers: { 'Idempotency-Key': newIdempotencyKey() },
-          body: JSON.stringify({ text: reply.trim(), visibility: 'customer' }),
+          body: JSON.stringify({
+            text: reply.trim(),
+            visibility: 'customer',
+            attachments: replyAttachments.map(({ source, product_id, message_id, image_index }) => ({
+              source,
+              ...(product_id ? { product_id } : {}),
+              ...(message_id ? { message_id } : {}),
+              image_index,
+            })),
+          }),
         },
       )
       setConversations((items) => items.map((item) => item.id === selectedConversation
-        ? { ...item, preview: message.text, time: displayTime(message.created_at), status: 'Needs reply', messages: [...item.messages, { from: 'staff', text: message.text, time: displayTime(message.created_at) }] }
+        ? {
+            ...item,
+            preview: message.text || 'Image',
+            time: displayTime(message.created_at),
+            status: 'Needs reply',
+            messages: [...item.messages, mapConversationMessage(message)],
+          }
         : item))
-      setReply('')
-      setToast('Reply queued for delivery')
+      if (message.delivery_status === 'sent') {
+        setReply('')
+        setReplyAttachments([])
+        setToast('Reply sent')
+      } else {
+        setToast('The reply could not be delivered. Check the conversation and try again.')
+      }
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'The reply could not be sent.')
+    } finally {
+      setReplySending(false)
     }
   }
 
@@ -656,19 +724,17 @@ function App() {
     try {
       const [, messages] = await Promise.all([
         apiRequest(businessPath(business.id, `/conversations/${id}/read`), { method: 'POST' }),
-        apiRequest<{ sender_type: 'customer' | 'agent' | 'staff'; text: string; created_at: string }[]>(businessPath(business.id, `/conversations/${id}/messages?limit=100`)),
+        apiRequest<CustomerMessageApi[]>(businessPath(business.id, `/conversations/${id}/messages?limit=100`)),
       ])
       setConversations((items) => items.map((item) => item.id === id
         ? {
             ...item,
             unread: false,
-            messages: messages.map((message) => ({
-              from: message.sender_type,
-              text: message.text,
-              time: displayTime(message.created_at),
-            })),
+            messages: messages.map(mapConversationMessage),
           }
         : item))
+      setReply('')
+      setReplyAttachments([])
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'The conversation could not be loaded.')
     }
@@ -694,6 +760,9 @@ function App() {
     })
     setBusinesses((items) => [...items.filter((item) => item.id !== created.id), created])
     setBusiness(created)
+    setSelectedConversation('')
+    setReply('')
+    setReplyAttachments([])
     setResourceErrors([])
     window.localStorage.setItem('reactant.activeBusinessId', created.id)
     return created
@@ -816,6 +885,10 @@ function App() {
                 conversations={visibleConversations}
                 allConversations={conversations}
                 selectedConversation={currentConversation}
+                products={replyProductsBusinessId === business.id ? replyProducts : []}
+                replyAttachments={replyAttachments}
+                setReplyAttachments={setReplyAttachments}
+                replySending={replySending}
                 filter={conversationFilter}
                 setFilter={setConversationFilter}
                 setSearch={setSearchTerm}
@@ -874,7 +947,7 @@ function App() {
                 openIntegrations={() => navigate('integrations')}
               />
             )}
-            {page === 'owner-assistant' && <OwnerAssistant businessId={business.id} decideApproval={decideApproval} approvals={approvals} />}
+            {page === 'owner-assistant' && <OwnerAssistant businessId={business.id} canPairTelegram={business.role === 'owner'} decideApproval={decideApproval} approvals={approvals} />}
             {page === 'owner-center' && (
               <OwnerCenter
                 userName={userName}
@@ -883,6 +956,9 @@ function App() {
                 businesses={businesses}
                 selectBusiness={(selected) => {
                   setBusiness(selected)
+                  setSelectedConversation('')
+                  setReply('')
+                  setReplyAttachments([])
                   setResourceErrors([])
                   window.localStorage.setItem('reactant.activeBusinessId', selected.id)
                 }}
@@ -1656,6 +1732,10 @@ function Inbox({
   conversations,
   allConversations,
   selectedConversation,
+  products,
+  replyAttachments,
+  setReplyAttachments,
+  replySending,
   filter,
   setFilter,
   setSearch,
@@ -1669,6 +1749,10 @@ function Inbox({
   conversations: Conversation[]
   allConversations: Conversation[]
   selectedConversation?: Conversation
+  products: CatalogProduct[]
+  replyAttachments: ReplyAttachment[]
+  setReplyAttachments: React.Dispatch<React.SetStateAction<ReplyAttachment[]>>
+  replySending: boolean
   filter: ConversationFilter
   setFilter: (filter: ConversationFilter) => void
   setSearch: (value: string) => void
@@ -1679,6 +1763,7 @@ function Inbox({
   setReply: (value: string) => void
   setStatus: (id: string, status: ConversationStatus) => void
 }) {
+  const [attachmentPickerOpen, setAttachmentPickerOpen] = useState(false)
   const filterOptions = [
     { label: 'All', count: allConversations.length },
     { label: 'Needs reply', count: allConversations.filter((conversation) => conversation.status === 'Needs reply').length },
@@ -1763,20 +1848,123 @@ function Inbox({
             </button>
           </div>
           <div className="message-thread">
-            {selectedConversation.messages.map((message, index) => (
-              <div className={`message-row message-${message.from}`} key={`${selectedConversation.id}-${index}`}>
+            {selectedConversation.messages.map((message) => (
+              <div className={`message-row message-${message.from}`} key={message.id}>
                 {message.from === 'customer' && <Avatar initials={selectedConversation.initials} color={selectedConversation.color} small />}
                 <div className="message-content">
                   {message.from !== 'customer' && <span className="message-sender">{message.from === 'agent' ? 'Reactant agent' : 'You'}</span>}
-                  <div className="message-bubble">{message.text}</div>
+                  {message.text && <div className="message-bubble">{message.text}</div>}
+                  {message.attachments.map((attachment, imageIndex) => (
+                    <div className="thread-image" key={`${message.id}-${imageIndex}`}>
+                      <img src={attachment.url} alt={attachment.alt} />
+                      {message.from === 'customer' && (
+                        <button
+                          type="button"
+                          className="thread-image-attach"
+                          onClick={() => {
+                            if (replyAttachments.length >= 3) return
+                            setReplyAttachments((current) => [...current, {
+                              source: 'conversation',
+                              message_id: message.id,
+                              image_index: attachment.source_index ?? imageIndex,
+                              url: attachment.url,
+                              alt: attachment.alt,
+                            }])
+                          }}
+                          disabled={replyAttachments.length >= 3}
+                        >
+                          <Plus size={12} /> Add to reply
+                        </button>
+                      )}
+                    </div>
+                  ))}
                   <span className="message-time">{message.time}</span>
+                  {message.from === 'staff' && message.deliveryStatus !== 'sent' && (
+                    <span className={`message-delivery-status ${message.deliveryStatus}`}>
+                      {message.deliveryStatus === 'failed' ? 'Not delivered' : 'Sending'}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
           </div>
           <form className="reply-composer" onSubmit={sendReply}>
-            <textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Write a reply..." aria-label="Write a reply" rows={2} />
-            <div className="composer-footer"><span>Replying as a workspace member</span><Button type="submit" disabled={!reply.trim()}><PaperPlaneTilt size={15} /> Send reply</Button></div>
+            <textarea
+              value={reply}
+              onChange={(event) => setReply(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+              placeholder="Write a reply..."
+              aria-label="Write a reply"
+              rows={2}
+            />
+            {replyAttachments.length > 0 && (
+              <div className="reply-attachment-strip">
+                {replyAttachments.map((attachment, index) => (
+                  <div className="reply-attachment-preview" key={`${attachment.source}-${attachment.message_id ?? attachment.product_id}-${attachment.image_index}`}>
+                    <img src={attachment.url} alt={attachment.alt} />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${attachment.alt}`}
+                      onClick={() => setReplyAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachmentPickerOpen && (
+              <div className="reply-image-picker">
+                <div className="reply-image-picker-heading">
+                  <strong>Share an image</strong>
+                  <span>{replyAttachments.length}/3 selected</span>
+                </div>
+                <div className="reply-image-picker-list">
+                  {products.flatMap((product) => product.images.slice(0, 6).map((url, imageIndex) => (
+                    <button
+                      type="button"
+                      className="reply-image-option"
+                      key={`${product.id}-${imageIndex}`}
+                      disabled={replyAttachments.length >= 3}
+                      onClick={() => setReplyAttachments((current) => [...current, {
+                        source: 'catalog',
+                        product_id: product.id,
+                        image_index: imageIndex,
+                        url,
+                        alt: product.name,
+                      }])}
+                    >
+                      <img src={url} alt="" />
+                      <span>{product.name}{imageIndex > 0 ? ` · ${imageIndex + 1}` : ''}</span>
+                      <Plus size={13} />
+                    </button>
+                  )))}
+                  {products.every((product) => product.images.length === 0) && (
+                    <span className="reply-image-empty">No catalog images are available yet.</span>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="composer-footer">
+              <button
+                type="button"
+                className={`composer-attach-button ${attachmentPickerOpen ? 'active' : ''}`}
+                onClick={() => setAttachmentPickerOpen((open) => !open)}
+                aria-expanded={attachmentPickerOpen}
+                aria-label="Add an image"
+              >
+                <ImageSquare size={17} />
+              </button>
+              <span>Enter to send · Shift + Enter for a new line</span>
+              <Button type="submit" disabled={replySending || (!reply.trim() && !replyAttachments.length)}>
+                <PaperPlaneTilt size={15} /> {replySending ? 'Sending' : 'Send'}
+              </Button>
+            </div>
           </form>
           </>}
         </section>
@@ -1958,6 +2146,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [dialogProvider, setDialogProvider] = useState<Connection | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [integrationToDisconnect, setIntegrationToDisconnect] = useState<Integration | null>(null)
   const [telegramSetup, setTelegramSetup] = useState<TelegramSetup | null>(null)
   const [telegramSetupFor, setTelegramSetupFor] = useState<string | null>(null)
   const [paypalSetup, setPaypalSetup] = useState<(PayPalWebhookSetup & { integrationId: string }) | null>(null)
@@ -2142,13 +2331,15 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     }
   }
 
-  async function disconnect(integration: Integration) {
-    if (!window.confirm(`Disconnect ${integration.provider}? Reactant will stop syncing this account.`)) return
+  async function disconnect() {
+    const integration = integrationToDisconnect
+    if (!integration) return
     setSaving(true)
     setError('')
     try {
       await apiRequest(businessPath(businessId, `/integrations/${integration.id}`), { method: 'DELETE' })
       setIntegrations((items) => items.filter((item) => item.id !== integration.id))
+      setIntegrationToDisconnect(null)
       if (telegramSetupFor === integration.id) {
         setTelegramSetup(null)
         setTelegramSetupFor(null)
@@ -2246,7 +2437,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                   {websiteConnections.map((item) => (
                     <div className="website-origin-row" key={item.id}>
                       <span>{item.allowed_origin || 'Registered website'}</span>
-                      <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(item)}>Remove</Button>
+                      <Button variant="soft" color="red" disabled={saving} onClick={() => setIntegrationToDisconnect(item)}>Remove</Button>
                     </div>
                   ))}
                 </div>
@@ -2267,7 +2458,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                           void loadPayPalWebhookSetup(connection.id).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'PayPal webhook details could not be loaded.'))
                         }}>Webhook setup</Button>}
                         {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
-                        {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>}
+                        {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => setIntegrationToDisconnect(connection)}>Disconnect</Button>}
                       </div>
                     </>
                   : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
@@ -2346,6 +2537,41 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
               <Button type="submit" disabled={saving}>{saving ? 'Connecting...' : dialogProvider === 'Shopify' ? 'Continue to Shopify' : 'Save credentials'}</Button>
             </div>
           </form>
+        </Dialog.Content>
+      </Dialog.Root>
+      <Dialog.Root
+        open={integrationToDisconnect !== null}
+        onOpenChange={(open) => {
+          if (!open && !saving) setIntegrationToDisconnect(null)
+        }}
+      >
+        <Dialog.Content className="dialog-content catalog-remove-dialog">
+          <Dialog.Title className="dialog-title">
+            Disconnect {integrationToDisconnect?.provider}?
+          </Dialog.Title>
+          <Dialog.Description className="dialog-description">
+            Reactant will stop syncing this account. Existing conversation history will remain in your workspace.
+          </Dialog.Description>
+          {error && <p className="api-error" role="alert">{error}</p>}
+          <div className="dialog-actions">
+            <Button
+              type="button"
+              variant="soft"
+              color="gray"
+              disabled={saving}
+              onClick={() => setIntegrationToDisconnect(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              color="red"
+              disabled={saving}
+              onClick={() => void disconnect()}
+            >
+              {saving ? 'Disconnecting...' : 'Disconnect'}
+            </Button>
+          </div>
         </Dialog.Content>
       </Dialog.Root>
     </div>
@@ -2480,7 +2706,172 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
   )
 }
 
-function OwnerAssistant({ businessId, decideApproval, approvals }: { businessId: string; decideApproval: (id: string, decision: 'approved' | 'rejected') => Promise<void>; approvals: Approval[] }) {
+type OwnerTelegramStatus = {
+  telegram_connected: boolean
+  paired: boolean
+  paired_at: string | null
+}
+
+type OwnerTelegramPairing = {
+  pairing_code: string
+  bot_username: string
+  expires_at: string
+}
+
+function OwnerTelegramChannel({ businessId }: { businessId: string }) {
+  const [status, setStatus] = useState<OwnerTelegramStatus | null>(null)
+  const [pairing, setPairing] = useState<OwnerTelegramPairing | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [disconnectOpen, setDisconnectOpen] = useState(false)
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const current = await apiRequest<OwnerTelegramStatus>(businessPath(businessId, '/owner-assistant/telegram'))
+      setStatus(current)
+      setError('')
+      if (current.paired) setPairing(null)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The Telegram owner channel could not be loaded.')
+    }
+  }, [businessId])
+
+  useEffect(() => {
+    let active = true
+    void apiRequest<OwnerTelegramStatus>(businessPath(businessId, '/owner-assistant/telegram'))
+      .then((current) => {
+        if (!active) return
+        setStatus(current)
+        setError('')
+        if (current.paired) setPairing(null)
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason.message : 'The Telegram owner channel could not be loaded.')
+      })
+    return () => { active = false }
+  }, [businessId])
+
+  useEffect(() => {
+    if (!pairing || status?.paired) return
+    const expiresIn = Math.max(0, new Date(pairing.expires_at).getTime() - Date.now())
+    const pollTimer = window.setInterval(() => { void loadStatus() }, 2000)
+    const expiryTimer = window.setTimeout(() => setPairing(null), expiresIn)
+    return () => {
+      window.clearInterval(pollTimer)
+      window.clearTimeout(expiryTimer)
+    }
+  }, [loadStatus, pairing, status?.paired])
+
+  async function createPairing() {
+    setBusy(true)
+    setError('')
+    setCopied(false)
+    try {
+      const created = await apiRequest<OwnerTelegramPairing>(
+        businessPath(businessId, '/owner-assistant/telegram/pairing'),
+        { method: 'POST' },
+      )
+      setPairing(created)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'A pairing code could not be created.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true)
+    try {
+      await apiRequest(businessPath(businessId, '/owner-assistant/telegram'), { method: 'DELETE' })
+      setStatus((current) => current ? { ...current, paired: false, paired_at: null } : current)
+      setPairing(null)
+      setDisconnectOpen(false)
+      setError('')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The owner channel could not be disconnected.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function copyPairingCommand() {
+    if (!pairing) return
+    try {
+      await navigator.clipboard.writeText(`/pair ${pairing.pairing_code}`)
+      setCopied(true)
+    } catch {
+      setError('Could not copy the command. Select and copy the code manually.')
+    }
+  }
+
+  return (
+    <section className="owner-telegram-channel" aria-label="Private Telegram owner channel">
+      <div className="owner-telegram-copy">
+        <span className="owner-telegram-icon"><TelegramLogo size={18} /></span>
+        <div>
+          <strong>Private Telegram channel</strong>
+          <p>
+            {status?.paired
+              ? 'Your verified Telegram account can message the agent and review approvals.'
+              : 'Pair your own Telegram account to receive private agent messages and approve requests.'}
+          </p>
+        </div>
+      </div>
+      {!status ? (
+        <span className="owner-telegram-status">Loading channel status...</span>
+      ) : !status.telegram_connected ? (
+        <span className="owner-telegram-status">Connect Telegram in Integrations first.</span>
+      ) : status.paired ? (
+        <div className="owner-telegram-actions">
+          <Badge color="green" variant="soft">Connected</Badge>
+          <Dialog.Root open={disconnectOpen} onOpenChange={setDisconnectOpen}>
+            <Dialog.Trigger>
+              <Button variant="soft" color="gray" disabled={busy}>Disconnect</Button>
+            </Dialog.Trigger>
+            <Dialog.Content maxWidth="380px">
+              <Dialog.Title>Disconnect private Telegram</Dialog.Title>
+              <Dialog.Description size="2">
+                The paired account will no longer receive agent messages or approve requests. Customer Telegram replies will continue to work.
+              </Dialog.Description>
+              <div className="dialog-actions">
+                <Dialog.Close><Button variant="soft" color="gray">Cancel</Button></Dialog.Close>
+                <Button color="red" disabled={busy} onClick={() => void disconnect()}>
+                  {busy ? 'Disconnecting...' : 'Disconnect'}
+                </Button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Root>
+        </div>
+      ) : (
+        <Button onClick={() => void createPairing()} disabled={busy}>
+          {busy ? 'Preparing...' : pairing ? 'Create a new code' : 'Pair Telegram'}
+        </Button>
+      )}
+      {pairing && !status?.paired && (
+        <div className="owner-telegram-pairing">
+          <div>
+            <strong>1. Open @{pairing.bot_username}</strong>
+            <a href={`https://t.me/${encodeURIComponent(pairing.bot_username)}`} target="_blank" rel="noreferrer">
+              Open in Telegram <ArrowUpRight size={12} />
+            </a>
+          </div>
+          <div>
+            <strong>2. Send this private command</strong>
+            <code>/pair {pairing.pairing_code}</code>
+            <Button size="1" variant="soft" onClick={() => void copyPairingCommand()}>
+              {copied ? 'Copied' : 'Copy command'}
+            </Button>
+          </div>
+          <span>Code expires at {displayTime(pairing.expires_at)}. Keep it private; it can only be used once.</span>
+        </div>
+      )}
+      {error && <p className="owner-telegram-error" role="alert">{error}</p>}
+    </section>
+  )
+}
+
+function OwnerAssistant({ businessId, canPairTelegram, decideApproval, approvals }: { businessId: string; canPairTelegram: boolean; decideApproval: (id: string, decision: 'approved' | 'rejected') => Promise<void>; approvals: Approval[] }) {
   const [messages, setMessages] = useState<OwnerMessage[] | null>(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -2584,6 +2975,7 @@ function OwnerAssistant({ businessId, decideApproval, approvals }: { businessId:
         <span className="owner-channel-notice-icon"><ShieldCheck size={19} /></span>
         <div><strong>Only your workspace team can see this conversation.</strong><p>Customers will never receive messages from this channel. Use it to answer agent questions, review requests, and adjust how it handles your business.</p></div>
       </div>
+      {canPairTelegram && <OwnerTelegramChannel businessId={businessId} />}
       <section className="owner-thread panel" aria-label="Private agent conversation">
         <header className="owner-thread-header">
           <div className="owner-agent-identity">

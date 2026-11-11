@@ -172,6 +172,24 @@ def _persist_event(
     return duplicate
 
 
+def _redact_telegram_pairing_code(payload: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(payload)
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return redacted
+    redacted_message = dict(message)
+    for field in ("text", "caption"):
+        value = redacted_message.get(field)
+        if isinstance(value, str):
+            redacted_message[field] = re.sub(
+                r"(?i)(/pair(?:@\w+)?\s+)[A-Za-z0-9_-]{20,100}",
+                r"\1[REDACTED]",
+                value,
+            )
+    redacted["message"] = redacted_message
+    return redacted
+
+
 def _ack(request: Request, duplicate: bool) -> ResourceEnvelope[WebhookAck]:
     return ResourceEnvelope(
         data=WebhookAck(received=True, duplicate=duplicate),
@@ -194,6 +212,11 @@ def _telegram_send_message(bot_token: str, chat_id: str, text: str) -> None:
         raise RuntimeError("Telegram message delivery failed.")
 
 
+def _telegram_send_long_message(bot_token: str, chat_id: str, text: str) -> None:
+    for offset in range(0, len(text), 4000):
+        _telegram_send_message(bot_token, chat_id, text[offset : offset + 4000])
+
+
 def _telegram_send_photo(bot_token: str, chat_id: str, image_url: str, caption: str = "") -> None:
     try:
         response = httpx.post(
@@ -207,6 +230,209 @@ def _telegram_send_photo(bot_token: str, chat_id: str, image_url: str, caption: 
         raise RuntimeError("Telegram image delivery failed.") from error
     if not isinstance(result, dict) or result.get("ok") is not True:
         raise RuntimeError("Telegram image delivery failed.")
+
+
+def _send_owner_telegram_notice(bot_token: str, chat_id: str, text: str) -> None:
+    try:
+        _telegram_send_long_message(bot_token, chat_id, text)
+    except RuntimeError as error:
+        logger.warning(
+            "Owner Telegram notice could not be delivered exception_type=%s",
+            type(error).__name__,
+        )
+
+
+def _handle_owner_telegram_update(
+    client: Client,
+    *,
+    channel_id: UUID,
+    business_id: UUID,
+    bot_token: str,
+    chat: dict[str, Any],
+    sender: dict[str, Any],
+    text: str,
+    update_id: str,
+) -> bool:
+    chat_id = str(chat.get("id", ""))
+    sender_id = str(sender.get("id", ""))
+    private_chat = chat.get("type") == "private" and chat_id and sender_id == chat_id
+    pair_command = text.strip().startswith("/pair")
+    if pair_command:
+        if not private_chat:
+            return True
+        match = re.fullmatch(r"/pair(?:@\w+)?\s+([A-Za-z0-9_-]{20,100})", text.strip())
+        if not match:
+            _send_owner_telegram_notice(
+                bot_token,
+                chat_id,
+                "That pairing code is invalid. Generate a new code in Reactant and send `/pair <code>` here.",
+            )
+            return True
+        token_hash = hashlib.sha256(match.group(1).encode()).hexdigest()
+        try:
+            owner_id = execute(
+                client.rpc(
+                    "pair_owner_telegram_chat",
+                    {
+                        "target_business_id": str(business_id),
+                        "target_integration_id": str(channel_id),
+                        "requested_token_hash": token_hash,
+                        "requested_chat_id": chat_id,
+                    },
+                )
+            )
+        except HTTPException as error:
+            logger.warning(
+                "Telegram owner pairing is unavailable business_id=%s error_code=%s",
+                business_id,
+                (error.detail.get("code") if isinstance(error.detail, dict) else "database_unavailable"),
+            )
+            _send_owner_telegram_notice(
+                bot_token,
+                chat_id,
+                "Owner pairing is not available right now. Apply the latest Reactant database migration and try again.",
+            )
+            return True
+        if owner_id:
+            _send_owner_telegram_notice(
+                bot_token,
+                chat_id,
+                "Owner channel connected. This private chat can now message your Reactant agent and review approvals.",
+            )
+        else:
+            _send_owner_telegram_notice(
+                bot_token,
+                chat_id,
+                "That pairing code has expired or is invalid. Generate a new code in Reactant.",
+            )
+        return True
+
+    if not private_chat:
+        return False
+
+
+    try:
+        channel = execute(
+            client.table("owner_telegram_channels")
+            .select("owner_user_id")
+            .eq("business_id", str(business_id))
+            .eq("integration_id", str(channel_id))
+            .eq("telegram_chat_id", chat_id)
+            .not_.is_("paired_at", "null")
+            .maybe_single()
+        )
+    except HTTPException as error:
+        detail = error.detail if isinstance(error.detail, dict) else {}
+        if detail.get("code") != "database_schema_outdated":
+            raise
+        logger.warning(
+            "Owner Telegram channel is unavailable until migrations are applied business_id=%s",
+            business_id,
+        )
+        return False
+    if not channel:
+        return False
+
+    stripped_text = text.strip()
+    if re.fullmatch(r"/(?:help|start)(?:@\w+)?", stripped_text):
+        _send_owner_telegram_notice(
+            bot_token,
+            chat_id,
+            "Send a message to talk to your business agent. For an approval, reply with `/approve <approval-id>` or `/reject <approval-id>`.",
+        )
+        return True
+
+    decision = re.fullmatch(
+        r"/(approve|reject)(?:@\w+)?\s+([0-9a-fA-F-]{36})",
+        stripped_text,
+    )
+    if decision:
+        try:
+            approval_id = UUID(decision.group(2))
+            result = execute(
+                client.rpc(
+                    "decide_telegram_approval",
+                    {
+                        "target_business_id": str(business_id),
+                        "target_integration_id": str(channel_id),
+                        "target_chat_id": chat_id,
+                        "target_approval_id": str(approval_id),
+                        "requested_decision": (
+                            "approved" if decision.group(1) == "approve" else "rejected"
+                        ),
+                        "requested_note": "Decided from the verified Telegram owner channel.",
+                        "requested_idempotency_key": (
+                            f"telegram-owner-approval:{channel_id}:{update_id}"
+                        ),
+                    },
+                )
+            )
+        except HTTPException as error:
+            message = (
+                "That approval is no longer pending."
+                if error.status_code in {404, 409}
+                else "This owner account can no longer decide approvals for the workspace."
+            )
+            _send_owner_telegram_notice(bot_token, chat_id, message)
+            return True
+        decision_text = "approved" if decision.group(1) == "approve" else "rejected"
+        _send_owner_telegram_notice(
+            bot_token,
+            chat_id,
+            f"Approval {result['id']} was {decision_text}.",
+        )
+        return True
+
+    if stripped_text.startswith("/"):
+        _send_owner_telegram_notice(
+            bot_token,
+            chat_id,
+            "Command not recognized. Send `/help` for owner-channel commands.",
+        )
+        return True
+    if not stripped_text:
+        _send_owner_telegram_notice(
+            bot_token,
+            chat_id,
+            "Send a text message to talk to your business agent.",
+        )
+        return True
+    if len(stripped_text) > 4000:
+        _send_owner_telegram_notice(
+            bot_token,
+            chat_id,
+            "Keep owner-channel messages under 4,000 characters, then send again.",
+        )
+        return True
+    try:
+        execute(
+            client.rpc(
+                "enqueue_owner_telegram_message",
+                {
+                    "target_business_id": str(business_id),
+                    "target_integration_id": str(channel_id),
+                    "target_chat_id": chat_id,
+                    "requested_text": stripped_text,
+                    "requested_idempotency_key": (
+                        f"telegram-owner:{channel_id}:{update_id}"
+                    ),
+                },
+            )
+        )
+    except HTTPException as error:
+        logger.warning(
+            "Owner Telegram message could not be queued business_id=%s exception_type=%s",
+            business_id,
+            type(error).__name__,
+        )
+        _send_owner_telegram_notice(
+            bot_token,
+            chat_id,
+            "Your message could not be sent to the agent. Confirm owner access is still active and try again.",
+        )
+        return True
+    _send_owner_telegram_notice(bot_token, chat_id, "Message sent to your Reactant agent.")
+    return True
 
 
 def _wants_product_images(text: str) -> bool:
@@ -329,6 +555,17 @@ def _process_telegram_update(
     text = message.get("text") or message.get("caption") or ""
     if not isinstance(text, str):
         text = ""
+    if _handle_owner_telegram_update(
+        client,
+        channel_id=channel_id,
+        business_id=business_id,
+        bot_token=credentials["bot_token"],
+        chat=chat,
+        sender=sender,
+        text=text,
+        update_id=update_id,
+    ):
+        return
     try:
         customer_images = _telegram_message_images(credentials["bot_token"], message)
     except (RuntimeError, ValueError) as error:
@@ -690,7 +927,7 @@ async def receive_telegram_webhook(
         business_id=business_id,
         event_id=str(update_id),
         event_type="telegram.update_received",
-        payload=payload,
+        payload=_redact_telegram_pairing_code(payload),
         topic="conversations",
     )
     if not duplicate:

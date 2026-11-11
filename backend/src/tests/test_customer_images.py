@@ -10,6 +10,7 @@ from src.agent.customer_images import (
     decode_customer_image_data_uri,
     history_with_customer_images,
     normalize_customer_image,
+    signed_customer_attachments,
 )
 from src.agent.runtime import invoke_business_agent
 from src.widget.routes import WidgetMessageCreate
@@ -117,6 +118,50 @@ class CustomerImageTests(unittest.TestCase):
         self.assertEqual(len(history[0]["content"]), 1)
         self.assertEqual(history[2]["content"][1]["image"]["source"]["bytes"], b"image-bytes")
         self.assertEqual(load_images.call_count, 1)
+
+    def test_signed_attachments_scope_customer_and_catalog_storage_paths(self) -> None:
+        class FakeBucket:
+            def create_signed_url(self, path, _ttl):
+                return {"signedURL": f"https://media.example/{path}"}
+
+        class FakeStorage:
+            def from_(self, bucket):
+                self.bucket = bucket
+                return FakeBucket()
+
+        class FakeClient:
+            storage = FakeStorage()
+
+        attachments = signed_customer_attachments(
+            FakeClient(),
+            business_id="business-a",
+            conversation_id="conversation-a",
+            attachments=[
+                {
+                    "type": "image",
+                    "bucket": "customer-chat-media",
+                    "storage_path": "business-a/conversation-a/customer.jpg",
+                },
+                {
+                    "type": "image",
+                    "bucket": "product-media",
+                    "storage_path": "business-a/product.jpg",
+                },
+                {
+                    "type": "image",
+                    "bucket": "product-media",
+                    "storage_path": "business-b/product.jpg",
+                },
+            ],
+        )
+
+        self.assertEqual(
+            [attachment["url"] for attachment in attachments],
+            [
+                "https://media.example/business-a/conversation-a/customer.jpg",
+                "https://media.example/business-a/product.jpg",
+            ],
+        )
 
 
 if __name__ == "__main__":

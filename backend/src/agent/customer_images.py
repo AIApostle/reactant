@@ -156,9 +156,9 @@ def signed_customer_attachments(
     business_id: str,
     conversation_id: str,
     attachments: list[dict[str, Any]] | None,
-) -> list[dict[str, str]]:
-    signed_attachments: list[dict[str, str]] = []
-    for attachment in attachments or []:
+) -> list[dict[str, Any]]:
+    signed_attachments: list[dict[str, Any]] = []
+    for source_index, attachment in enumerate(attachments or []):
         if not isinstance(attachment, dict) or attachment.get("type") != "image":
             continue
         existing_url = attachment.get("url")
@@ -169,15 +169,27 @@ def signed_customer_attachments(
                     "type": "image",
                     "url": existing_url,
                     "alt": str(attachment.get("alt") or "Image"),
+                    "source_index": source_index,
                 }
             )
             continue
-        if (
-            not isinstance(path, str)
-            or not path.startswith(f"{business_id}/{conversation_id}/")
-        ):
+        bucket_name = attachment.get("bucket", "customer-chat-media")
+        allowed_path = (
+            isinstance(path, str)
+            and (
+                (
+                    bucket_name == "customer-chat-media"
+                    and path.startswith(f"{business_id}/{conversation_id}/")
+                )
+                or (
+                    bucket_name == "product-media"
+                    and path.startswith(f"{business_id}/")
+                )
+            )
+        )
+        if not allowed_path:
             continue
-        signed = client.storage.from_("customer-chat-media").create_signed_url(path, 3600)
+        signed = client.storage.from_(bucket_name).create_signed_url(path, 3600)
         url = signed.get("signedURL") or signed.get("signed_url")
         if isinstance(url, str):
             signed_attachments.append(
@@ -185,6 +197,7 @@ def signed_customer_attachments(
                     "type": "image",
                     "url": url,
                     "alt": str(attachment.get("alt") or "Customer-provided image"),
+                    "source_index": source_index,
                 }
             )
     return signed_attachments
