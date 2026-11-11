@@ -57,7 +57,7 @@ type SettingsApi = {
   privacy: Record<string, string | number | boolean | null>
 }
 
-type MemberApi = { id: string; user_id: string; email: string; display_name: string; role: TeamMember['role'] }
+type MemberApi = { id: string; user_id: string; email?: string | null; display_name?: string | null; role: TeamMember['role'] }
 type InvitationApi = { id: string; email: string; role: TeamMember['role']; status: string }
 
 const tabs: { label: SettingsTab; icon: Icon }[] = [
@@ -85,7 +85,8 @@ function roleLabel(role: TeamMember['role']) {
   return role === 'read_only' ? 'Read only' : role[0].toUpperCase() + role.slice(1)
 }
 
-function initialsFor(name: string) {
+function initialsFor(name?: string | null) {
+  if (!name?.trim()) return 'WM'
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] ?? '').join('').toUpperCase() || 'WM'
 }
 
@@ -153,13 +154,16 @@ export default function WorkspaceSettings({
         if (active) setLoadError(error instanceof Error ? error.message : 'Workspace settings could not be loaded.')
       }).finally(() => { if (active) setLoading(false) }),
       apiRequest<MemberApi[]>(businessPath(businessId, '/members')).then((members) => {
-        if (active) setTeam(members.map((member) => ({
-          id: member.id,
-          name: member.display_name || member.email || member.user_id,
-          email: member.email ?? '',
-          role: member.role,
-          initials: initialsFor(member.display_name),
-        })))
+        if (active) setTeam(members.map((member) => {
+          const displayName = member.display_name?.trim() || member.email?.trim() || `Team member ${member.user_id.slice(0, 8)}`
+          return {
+            id: member.id,
+            name: displayName,
+            email: member.email?.trim() || 'Email unavailable',
+            role: member.role,
+            initials: initialsFor(displayName),
+          }
+        }))
       }).catch((error: unknown) => {
         if (active) setTeamError(error instanceof Error ? error.message : 'Workspace members could not be loaded.')
       }).finally(() => { if (active) setTeamLoading(false) }),

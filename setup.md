@@ -18,6 +18,9 @@ account. Reactant does not hold merchant funds. Refunds are explicit
 owner/admin actions and are verified with PayPal before the order ledger is
 updated.
 
+For the detailed AgentCard environment checklist, PayPal webhook setup, and
+end-to-end Sandbox procedure, see [`AGENTCARD_SETUP.md`](./AGENTCARD_SETUP.md).
+
 ## What is already in the repository
 
 - Supabase Auth and business tenancy.
@@ -50,10 +53,10 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_PERISHABLE_KEY=<server-compatible-supabase-key>
 SUPABASE_SECRET_KEY=<server-only-secret-key>
 CREDENTIALS_ENCRYPTION_KEY=<fernet-key>
-ALLOWED_WEB_ORIGINS=https://reactant-theta.vercel.app
+ALLOWED_WEB_ORIGINS=https://getreactant.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
 PUBLIC_API_BASE_URL=https://reactant.onrender.com
-PUBLIC_FRONTEND_URL=https://reactant-theta.vercel.app
+PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US
 OPENROUTER_VISION_MODEL_ID=google/gemini-2.5-flash
@@ -167,29 +170,18 @@ Use the PayPal Developer Dashboard, not a personal password:
 1. Create a PayPal Sandbox business account for the test business.
 2. Create a Sandbox REST app under that business account.
 3. Save the Sandbox client ID and client secret securely.
-4. Create a webhook for:
-
-   ```text
-   https://<public-backend-host>/webhooks/paypal/<integration_id>
-   ```
-
-   The integration ID is available after the initial connection record is
-   created. If PayPal requires the webhook before the ID is known, create the
-   integration first, then finish webhook configuration and save its webhook
-   ID.
-5. Subscribe to at least these events:
-   - `CHECKOUT.ORDER.APPROVED`
-   - `PAYMENT.CAPTURE.COMPLETED`
-   - `PAYMENT.CAPTURE.DENIED`
-   - `PAYMENT.CAPTURE.REFUNDED`
-   - `CHECKOUT.PAYMENT-APPROVAL.REVERSED`
-6. Set `PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com`.
-7. Use a Sandbox personal account as the customer and the Sandbox business
+4. Set `PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com`.
+5. Use a Sandbox personal account as the customer and the Sandbox business
    account as the merchant.
 
-The PayPal client ID, client secret, and webhook ID are submitted through the
-authenticated Integrations page over HTTPS. They are encrypted at rest and
-never returned to the frontend. PayPal credentials must remain server-side.
+Connect the PayPal Sandbox client ID and secret first, then use **Webhook
+setup** on the integration card. Reactant displays the webhook URL containing
+the newly-created integration ID. Create the webhook in that same Sandbox
+REST app, subscribe to `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`,
+`PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.DENIED`,
+`PAYMENT.CAPTURE.REFUNDED`, and `CHECKOUT.PAYMENT-APPROVAL.REVERSED`, then
+save the webhook ID in Reactant. PayPal credentials and webhook ID are
+encrypted at rest and never returned to the frontend.
 
 The backend uses only the connected business's encrypted PayPal credentials;
 it never falls back to the deployment's global PayPal credentials. Connect the
@@ -226,7 +218,7 @@ Use the hosted HTTPS backend for provider testing. Do not expose Supabase
 secrets through a tunnel. Register the exact Telegram and PayPal webhook URLs
 against that public backend.
 
-The deployed frontend is `https://reactant-theta.vercel.app` and the deployed
+The deployed frontend is `https://getreactant.vercel.app` and the deployed
 backend is `https://reactant.onrender.com`. For local testing, the frontend
 uses `http://localhost:5173` and the backend uses
 `http://localhost:8000`; include both frontend origins in
@@ -240,7 +232,8 @@ Run the test in this order:
 2. Create/select a business.
 3. Apply migration 0003 and set `SUPABASE_SECRET_KEY`,
    `CREDENTIALS_ENCRYPTION_KEY`, and the hosted HTTPS URLs in Render.
-4. Connect and test the Telegram bot and PayPal Sandbox app from Integrations.
+4. Connect and test the Telegram bot and PayPal Sandbox app from Integrations;
+   complete the PayPal webhook setup in the integration card.
 5. Add an active, agent-enabled catalog item with current price and stock.
 6. Enable the Business Agent and its order and PayPal checkout permissions.
 7. Set `AGENTCARD_ENABLED=true` in Render and redeploy after credentials and

@@ -30,8 +30,9 @@ request/response behavior.
   4217 currency is explicitly selected. Country and currency are independent.
 - **Pagination:** Cursor based. `limit` defaults to 25 and is capped at 100.
 - **Versioning:** Breaking changes require a new major API prefix.
-- **Documentation:** Publish `/api/v1/openapi.json` and Swagger UI at
-  `/api/v1/docs` outside production. Both are disabled in production.
+- **Documentation:** Publish the OpenAPI definition at `/api/v1/openapi.json`
+  in every environment for APIMatic and SDK tooling. Swagger UI at
+  `/api/v1/docs` is available only outside production.
 
 ### Standard success envelope
 
@@ -309,6 +310,8 @@ conflicts return `412`.
 | `GET` | `/integrations/callback/{provider}` | Handle the provider callback and redirect to the frontend. |
 | `POST` | `/businesses/{business_id}/integrations` | Connect a provider using a supported secure setup method. |
 | `GET` | `/businesses/{business_id}/integrations/{integration_id}` | Read non-secret connection details and health. |
+| `GET` | `/businesses/{business_id}/integrations/{integration_id}/paypal-webhook` | Return the PayPal webhook URL and whether its ID is configured. |
+| `PUT` | `/businesses/{business_id}/integrations/{integration_id}/paypal-webhook` | Store the PayPal webhook ID encrypted with the integration credentials. |
 | `POST` | `/businesses/{business_id}/integrations/{integration_id}/test` | Test provider connectivity and permissions; return updated health. |
 | `POST` | `/businesses/{business_id}/integrations/{integration_id}/sync` | Queue an initial or requested synchronization. |
 | `DELETE` | `/businesses/{business_id}/integrations/{integration_id}` | Revoke/disconnect and schedule credential deletion. |
@@ -359,11 +362,14 @@ PayPal setup request:
   "provider": "paypal",
   "credentials": {
     "consumer_key": "PayPal REST app client ID",
-    "consumer_secret": "PayPal REST app secret",
-    "webhook_id": "PayPal webhook ID"
+    "consumer_secret": "PayPal REST app secret"
   }
 }
 ```
+
+After creating the integration, create a PayPal webhook at the URL returned by
+`GET /businesses/{business_id}/integrations/{integration_id}/paypal-webhook`,
+then save the PayPal webhook ID with the corresponding `PUT` route.
 
 Credential submission is allowed only over TLS to an authenticated,
 business-authorized endpoint. Encrypt credentials at rest, redact them from

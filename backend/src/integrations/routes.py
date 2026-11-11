@@ -2,7 +2,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable
 from uuid import UUID
 from urllib.parse import urlencode, urlparse
 
@@ -19,6 +19,8 @@ from src.schemas.integrations import (
     IntegrationCreate,
     IntegrationAuthorizationResponse,
     IntegrationResponse,
+    PayPalWebhookConfigurationRequest,
+    PayPalWebhookSetupResponse,
     TelegramSetupResponse,
 )
 from src.supabase.client import get_user_supabase_client, get_supabase_settings
@@ -40,11 +42,33 @@ VISIBLE_FIELDS = (
     "id,provider,category,status,connected_at,last_success_at,last_error,"
     "granted_scopes,sync_status,allowed_origin"
 )
+BASE_VISIBLE_FIELDS = (
+    "id,provider,category,status,connected_at,last_success_at,last_error,"
+    "granted_scopes,sync_status"
+)
 SHOPIFY_DOMAIN_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?!localhost$)(?!\d{1,3}(?:\.\d{1,3}){3}$)"
     r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$"
 )
 SHOPIFY_AUTH_TTL_SECONDS = 600
+
+
+def _is_missing_allowed_origin(error: HTTPException) -> bool:
+    cause = error.__cause__
+    code = getattr(cause, "code", None)
+    if code not in {"42703", "PGRST204", "PGRST205"}:
+        return False
+    details = f"{getattr(cause, 'message', '')} {getattr(cause, 'details', '')}".casefold()
+    return "allowed_origin" in details
+
+
+def _execute_integration_query(query_factory: Callable[[str, bool], Any]) -> Any:
+    try:
+        return execute(query_factory(VISIBLE_FIELDS, True))
+    except HTTPException as error:
+        if not _is_missing_allowed_origin(error):
+            raise
+        return execute(query_factory(BASE_VISIBLE_FIELDS, False))
 
 
 def _shopify_domain(value: str) -> str:
@@ -110,11 +134,11 @@ def _validate_provider_credentials(body: IntegrationCreate) -> dict[str, str]:
                 detail={"code": "validation_error", "message": "The request could not be completed."},
             )
     elif body.provider == "paypal":
-        required = {"consumer_key", "consumer_secret", "webhook_id"}
+        required = {"consumer_key", "consumer_secret"}
         if not required.issubset(credentials):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"code": "validation_error", "message": "The request could not be completed."},
+                detail={"code": "validation_error", "message": "PayPal client ID and secret are required."},
             )
     elif body.provider == "website_chat":
         origin = credentials.get("allowed_origin", "").strip().rstrip("/")
@@ -193,6 +217,17 @@ def _telegram_setup(request: Request, integration_id: UUID) -> tuple[str, str]:
     return f"{base_url}/webhooks/telegram/{integration_id}", base_url
 
 
+def _paypal_webhook_url(request: Request, integration_id: UUID) -> str:
+    settings = get_supabase_settings()
+    base_url = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
+    if not base_url.startswith("https://"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "public_url_unavailable", "message": "Set PUBLIC_API_BASE_URL to an HTTPS backend URL before configuring PayPal webhooks."},
+        )
+    return f"{base_url}/webhooks/paypal/{integration_id}"
+
+
 def _telegram_api(
     bot_token: str,
     method: str,
@@ -258,9 +293,9 @@ def list_integrations(
     client: Database,
 ) -> CollectionEnvelope[IntegrationResponse]:
     get_business_membership(client, business_id, user.id)
-    rows = execute(
-        client.table("integrations")
-        .select(VISIBLE_FIELDS)
+    rows = _execute_integration_query(
+        lambda fields, _include_origin: client.table("integrations")
+        .select(fields)
         .eq("business_id", str(business_id))
         .order("created_at", desc=True)
     )
@@ -300,32 +335,136 @@ def create_integration(
     ciphertext = _cipher().encrypt(
         json.dumps(credentials, separators=(",", ":"), sort_keys=True).encode()
     ).decode()
-    integration = execute(
-        client.table("integrations")
-        .insert(
-            {
-                "business_id": str(business_id),
-                "provider": body.provider,
-                "category": {
-                    "woocommerce": "commerce",
-                    "telegram": "messaging",
-                    "paypal": "payments",
-                    "website_chat": "messaging",
-                }[body.provider],
-                "status": "connected" if body.provider == "website_chat" else "pending",
-                "credentials_ciphertext": ciphertext,
-                "allowed_origin": credentials.get("allowed_origin"),
-                "connected_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
-                "last_success_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
-                "sync_status": "ready" if body.provider == "website_chat" else "idle",
-                "last_error": None,
-            }
-        )
-        .select(VISIBLE_FIELDS)
-        .single()
-    )
+    def create_query(fields: str, include_origin: bool) -> Any:
+        if body.provider == "website_chat" and not include_origin:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "database_schema_outdated",
+                    "message": "Website chat requires the latest Supabase migrations. Apply the integration allowed-origin migration and retry.",
+                },
+            )
+        values = {
+            "business_id": str(business_id),
+            "provider": body.provider,
+            "category": {
+                "woocommerce": "commerce",
+                "telegram": "messaging",
+                "paypal": "payments",
+                "website_chat": "messaging",
+            }[body.provider],
+            "status": "connected" if body.provider == "website_chat" else "pending",
+            "credentials_ciphertext": ciphertext,
+            "connected_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
+            "last_success_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
+            "sync_status": "ready" if body.provider == "website_chat" else "idle",
+            "last_error": None,
+        }
+        if include_origin:
+            values["allowed_origin"] = credentials.get("allowed_origin")
+        if credentials.get("webhook_id"):
+            values["webhook_id"] = credentials["webhook_id"]
+        return client.table("integrations").insert(values).select(fields).single()
+
+    integration = _execute_integration_query(create_query)
     return ResourceEnvelope(
         data=IntegrationResponse(**integration),
+        request_id=request.state.request_id,
+    )
+
+
+@router.get(
+    "/businesses/{business_id}/integrations/{integration_id}/paypal-webhook",
+    response_model=ResourceEnvelope[PayPalWebhookSetupResponse],
+)
+def get_paypal_webhook_setup(
+    business_id: UUID,
+    integration_id: UUID,
+    request: Request,
+    user: User,
+    client: Database,
+) -> ResourceEnvelope[PayPalWebhookSetupResponse]:
+    membership = get_business_membership(client, business_id, user.id)
+    require_role(membership, {"owner", "admin"})
+    integration = execute(
+        client.table("integrations")
+        .select("id,provider,credentials_ciphertext")
+        .eq("business_id", str(business_id))
+        .eq("id", str(integration_id))
+        .maybe_single()
+    )
+    if not integration or integration["provider"] != "paypal":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "The PayPal integration was not found."},
+        )
+    credentials = _decrypt_credentials(integration["credentials_ciphertext"])
+    return ResourceEnvelope(
+        data=PayPalWebhookSetupResponse(
+            webhook_url=_paypal_webhook_url(request, integration_id),
+            configured=bool(credentials.get("webhook_id")),
+        ),
+        request_id=request.state.request_id,
+    )
+
+
+@router.put(
+    "/businesses/{business_id}/integrations/{integration_id}/paypal-webhook",
+    response_model=ResourceEnvelope[PayPalWebhookSetupResponse],
+)
+def configure_paypal_webhook(
+    business_id: UUID,
+    integration_id: UUID,
+    body: PayPalWebhookConfigurationRequest,
+    request: Request,
+    user: User,
+    client: Database,
+) -> ResourceEnvelope[PayPalWebhookSetupResponse]:
+    webhook_id = body.webhook_id.strip()
+    if not webhook_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "validation_error", "message": "Enter the PayPal webhook ID."},
+        )
+    membership = get_business_membership(client, business_id, user.id)
+    require_role(membership, {"owner", "admin"})
+    integration = execute(
+        client.table("integrations")
+        .select("id,provider,credentials_ciphertext")
+        .eq("business_id", str(business_id))
+        .eq("id", str(integration_id))
+        .maybe_single()
+    )
+    if not integration or integration["provider"] != "paypal":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "The PayPal integration was not found."},
+        )
+    credentials = _decrypt_credentials(integration["credentials_ciphertext"])
+    credentials["webhook_id"] = webhook_id
+    encryption_key = get_supabase_settings().credentials_encryption_key
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "credential_encryption_unavailable", "message": "Integration credentials could not be stored securely."},
+        )
+    ciphertext = Fernet(encryption_key.get_secret_value().encode()).encrypt(
+        json.dumps(credentials, separators=(",", ":"), sort_keys=True).encode()
+    ).decode()
+    execute(
+        client.table("integrations")
+        .update({
+            "credentials_ciphertext": ciphertext,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("business_id", str(business_id))
+        .eq("id", str(integration_id))
+    )
+    return ResourceEnvelope(
+        data=PayPalWebhookSetupResponse(
+            webhook_url=_paypal_webhook_url(request, integration_id),
+            configured=True,
+        ),
         request_id=request.state.request_id,
     )
 
@@ -342,9 +481,9 @@ def get_integration(
     client: Database,
 ) -> ResourceEnvelope[IntegrationResponse]:
     get_business_membership(client, business_id, user.id)
-    integration = execute(
-        client.table("integrations")
-        .select(VISIBLE_FIELDS)
+    integration = _execute_integration_query(
+        lambda fields, _include_origin: client.table("integrations")
+        .select(fields)
         .eq("business_id", str(business_id))
         .eq("id", str(integration_id))
         .maybe_single()
@@ -553,8 +692,8 @@ def test_integration(
             detail={"code": "provider_not_supported", "message": "This provider is not available yet."},
         )
     now = datetime.now(timezone.utc).isoformat()
-    updated = execute(
-        client.table("integrations")
+    updated = _execute_integration_query(
+        lambda fields, _include_origin: client.table("integrations")
         .update(
             {
                 "status": "connected",
@@ -567,7 +706,7 @@ def test_integration(
         )
         .eq("business_id", str(business_id))
         .eq("id", str(integration_id))
-        .select(VISIBLE_FIELDS)
+        .select(fields)
         .single()
     )
     return ResourceEnvelope(data=IntegrationResponse(**updated), request_id=request.state.request_id)
@@ -596,8 +735,8 @@ def _test_telegram_integration(
         {"url": webhook_url, "secret_token": webhook_secret, "drop_pending_updates": "false"},
     )
     now = datetime.now(timezone.utc).isoformat()
-    updated = execute(
-        client.table("integrations")
+    updated = _execute_integration_query(
+        lambda fields, _include_origin: client.table("integrations")
         .update(
             {
                 "status": "connected",
@@ -610,7 +749,7 @@ def _test_telegram_integration(
         )
         .eq("business_id", str(business_id))
         .eq("id", str(integration_id))
-        .select(VISIBLE_FIELDS)
+        .select(fields)
         .single()
     )
     return ResourceEnvelope(data=IntegrationResponse(**updated), request_id=request.state.request_id)
@@ -826,24 +965,24 @@ def integration_callback(provider: str, request: Request) -> RedirectResponse:
         )
         integration_query = service_client.table("integrations")
         if existing:
-            integration = execute(
-                integration_query.update({
+            integration = _execute_integration_query(
+                lambda fields, _include_origin: integration_query.update({
                     "status": "pending",
                     "credentials_ciphertext": ciphertext,
                     "last_error": None,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", existing["id"]).select(VISIBLE_FIELDS).single()
+                }).eq("id", existing["id"]).select(fields).single()
             )
         else:
-            integration = execute(
-                integration_query.insert({
+            integration = _execute_integration_query(
+                lambda fields, _include_origin: integration_query.insert({
                     "business_id": str(business_id),
                     "provider": "shopify",
                     "category": "commerce",
                     "status": "pending",
                     "credentials_ciphertext": ciphertext,
                     "last_error": None,
-                }).select(VISIBLE_FIELDS).single()
+                }).select(fields).single()
             )
         test_shopify(shop, access_token)
         now = datetime.now(timezone.utc).isoformat()

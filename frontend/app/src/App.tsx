@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Bell,
+  BuildingOffice,
   CaretDown,
   CaretRight,
   Check,
@@ -12,6 +13,7 @@ import {
   ChatCircleDots,
   Clock,
   CreditCard,
+  Code,
   DotsThree,
   Eye,
   EyeSlash,
@@ -25,6 +27,7 @@ import {
   Plus,
   Robot,
   ShieldCheck,
+  SignOut,
   ShoppingBagOpen,
   Storefront,
   Trash,
@@ -68,6 +71,7 @@ import {
   type Business,
   type Integration,
   type OwnerMessage,
+  type PayPalWebhookSetup,
   type TelegramSetup,
   type WebsiteChatInstall,
 } from './api'
@@ -96,10 +100,10 @@ const reactantGridTheme = themeQuartz.withParams({
   spacing: 8,
 })
 
-type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings'
+type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings' | 'owner-center'
 type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal' | 'Website chat'
 type ConversationStatus = 'Needs reply' | 'Open' | 'Resolved'
-type ConversationFilter = 'All' | 'Needs reply'
+type ConversationFilter = 'All' | ConversationStatus
 
 type Conversation = {
   id: string
@@ -303,6 +307,7 @@ const pageTitles: Record<Page, string> = {
   agent: 'Business agent',
   'owner-assistant': 'Agent messages',
   settings: 'Settings',
+  'owner-center': 'Owner center',
 }
 
 function App() {
@@ -320,10 +325,12 @@ function App() {
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(null)
   const [agentConfigEtag, setAgentConfigEtag] = useState<string | null>(null)
   const [business, setBusiness] = useState<Business | null>(null)
+  const [businesses, setBusinesses] = useState<Business[]>([])
   const [sessionReady, setSessionReady] = useState(false)
   const [workspaceLoading, setWorkspaceLoading] = useState(true)
   const [workspaceError, setWorkspaceError] = useState('')
   const [userName, setUserName] = useState('Workspace member')
+  const [userEmail, setUserEmail] = useState('')
   const [workspaceName, setWorkspaceName] = useState('')
   const [workspaceCreating, setWorkspaceCreating] = useState(false)
   const [resourceErrors, setResourceErrors] = useState<string[]>([])
@@ -370,9 +377,11 @@ function App() {
         setUserName(typeof metadataName === 'string' && metadataName.trim()
           ? metadataName.trim()
           : session.user.email ?? 'Workspace member')
+        setUserEmail(session.user.email ?? '')
         setSessionReady(true)
         const response = await apiRequest<Business[]>('/businesses')
         if (!active) return
+        setBusinesses(response)
         const preferredId = window.localStorage.getItem('reactant.activeBusinessId')
         const selected = response.find((item) => item.id === preferredId) ?? response[0] ?? null
         setBusiness(selected)
@@ -554,12 +563,14 @@ function App() {
 
   function navigate(nextPage: Page) {
     setPage(nextPage)
+    setResourceErrors([])
     setMobileNavOpen(false)
     setSelectedOrder(null)
   }
 
   const updateBusiness = useCallback((updated: Business) => {
     setBusiness((current) => current ? { ...current, ...updated } : updated)
+    setBusinesses((items) => items.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
   }, [])
 
   async function sendReply(event: React.FormEvent<HTMLFormElement>) {
@@ -639,7 +650,7 @@ function App() {
   async function openConversation(id: string) {
     if (!business) return
     setSelectedConversation(id)
-    setPage('inbox')
+    navigate('inbox')
     setSearchOpen(false)
     setSearchTerm('')
     try {
@@ -664,8 +675,8 @@ function App() {
   }
 
   function openOrder(id: string) {
+    navigate('orders')
     setSelectedOrder(id)
-    setPage('orders')
     setSearchOpen(false)
     setSearchTerm('')
   }
@@ -676,18 +687,25 @@ function App() {
     setSearchTerm('')
   }
 
+  async function createBusiness(name: string) {
+    const created = await apiRequest<Business>('/businesses', {
+      method: 'POST',
+      body: JSON.stringify({ name, currency: 'USD', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }),
+    })
+    setBusinesses((items) => [...items.filter((item) => item.id !== created.id), created])
+    setBusiness(created)
+    setResourceErrors([])
+    window.localStorage.setItem('reactant.activeBusinessId', created.id)
+    return created
+  }
+
   async function createWorkspace(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!workspaceName.trim()) return
     setWorkspaceCreating(true)
     setWorkspaceError('')
     try {
-      const created = await apiRequest<Business>('/businesses', {
-        method: 'POST',
-        body: JSON.stringify({ name: workspaceName.trim(), currency: 'USD', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }),
-      })
-      setBusiness(created)
-      window.localStorage.setItem('reactant.activeBusinessId', created.id)
+      await createBusiness(workspaceName.trim())
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : 'Workspace could not be created.')
     } finally {
@@ -740,6 +758,7 @@ function App() {
           businessName={business.name}
           userName={userName}
           role={business.role}
+          openOwnerCenter={() => navigate('owner-center')}
         />
         <div className="workspace">
           <header className="topbar">
@@ -761,8 +780,8 @@ function App() {
                 <Bell size={19} />
                 <span className="notification-mark" />
               </button>
-              <button className="profile-button" aria-label="Sign out" onClick={() => void signOut()}>
-                <span className="profile-avatar">{nameInitials(business.name)}</span>
+              <button className="profile-button" aria-label="Open owner center" onClick={() => navigate('owner-center')}>
+                <span className="profile-avatar">{nameInitials(userName)}</span>
                 <CaretDown size={14} />
               </button>
             </div>
@@ -855,7 +874,22 @@ function App() {
                 openIntegrations={() => navigate('integrations')}
               />
             )}
-            {page === 'owner-assistant' && <OwnerAssistant businessId={business.id} notify={setToast} decideApproval={decideApproval} approvals={approvals} />}
+            {page === 'owner-assistant' && <OwnerAssistant businessId={business.id} decideApproval={decideApproval} approvals={approvals} />}
+            {page === 'owner-center' && (
+              <OwnerCenter
+                userName={userName}
+                userEmail={userEmail}
+                currentBusiness={business}
+                businesses={businesses}
+                selectBusiness={(selected) => {
+                  setBusiness(selected)
+                  setResourceErrors([])
+                  window.localStorage.setItem('reactant.activeBusinessId', selected.id)
+                }}
+                createBusiness={createBusiness}
+                signOut={() => void signOut()}
+              />
+            )}
           </main>
         </div>
 
@@ -925,7 +959,7 @@ function App() {
   )
 }
 
-function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCount, businessName, userName, role }: {
+function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCount, businessName, userName, role, openOwnerCenter }: {
   page: Page
   navigate: (page: Page) => void
   mobileNavOpen: boolean
@@ -935,6 +969,7 @@ function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCou
   businessName: string
   userName: string
   role: Business['role']
+  openOwnerCenter: () => void
 }) {
   return (
     <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
@@ -955,11 +990,11 @@ function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCou
         {navigation.slice(5).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} />)}
       </nav>
       <div className="sidebar-bottom">
-        <div className="sidebar-user">
+        <button className={`sidebar-user ${page === 'owner-center' ? 'sidebar-user-active' : ''}`} onClick={openOwnerCenter} aria-label="Open owner center">
           <span className="user-avatar">{nameInitials(userName)}</span>
           <span className="user-meta"><strong>{userName}</strong><small>{role?.replace('_', ' ') ?? 'Workspace member'}</small></span>
           <DotsThree size={20} />
-        </div>
+        </button>
       </div>
     </aside>
   )
@@ -1414,13 +1449,16 @@ function Catalog({
       cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
         <button
           className={`catalog-agent-access ${data.agentCanShare ? 'catalog-agent-enabled' : ''}`}
+          title={data.agentCanShare ? 'Hide this product from the agent' : 'Let the agent recommend and share this product'}
           onClick={(event) => {
             event.stopPropagation()
             void toggleAgentAccess(data)
           }}
           aria-pressed={data.agentCanShare}
+          aria-label={`${data.agentCanShare ? 'Hide' : 'Allow'} ${data.name} ${data.agentCanShare ? 'from' : 'for'} agent sharing`}
         >
-          <Robot size={14} /> {data.agentCanShare ? 'Can share' : 'Hidden'}
+          {data.agentCanShare ? <Eye size={14} /> : <EyeSlash size={14} />}
+          {data.agentCanShare ? 'Visible to agent' : 'Hidden from agent'}
         </button>
       ) : null,
     },
@@ -1432,7 +1470,7 @@ function Catalog({
       minWidth: 158,
       cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
         <span className="catalog-grid-actions">
-          <Button size="1" variant="soft" color="gray" onClick={(event) => {
+          <Button className="catalog-grid-edit" size="1" variant="soft" color="gray" onClick={(event) => {
             event.stopPropagation()
             openProductForm(data)
           }}>Edit</Button>
@@ -1443,6 +1481,7 @@ function Catalog({
               setProductToRemove(data)
             }}
             aria-label={`Remove ${data.name}`}
+            title="Remove product"
           ><Trash size={16} /></button>
         </span>
       ) : null,
@@ -1642,29 +1681,24 @@ function Inbox({
   const filterOptions = [
     { label: 'All', count: allConversations.length },
     { label: 'Needs reply', count: allConversations.filter((conversation) => conversation.status === 'Needs reply').length },
+    { label: 'Open', count: allConversations.filter((conversation) => conversation.status === 'Open').length },
+    { label: 'Resolved', count: allConversations.filter((conversation) => conversation.status === 'Resolved').length },
   ] as const
   const conversationColumns = useMemo<ColDef<Conversation>[]>(() => [
     {
       field: 'name',
-      headerName: 'Customer',
+      headerName: '',
       flex: 1,
-      minWidth: 165,
+      minWidth: 0,
+      sortable: false,
+      filter: false,
+      resizable: false,
       cellRenderer: ({ data }: ICellRendererParams<Conversation>) => data ? (
         <span className="inbox-grid-customer">
           <Avatar initials={data.initials} color={data.color} small />
           <span><strong>{data.name}{data.unread && <i aria-label="Unread" />}</strong><small>{data.preview}</small></span>
         </span>
       ) : null,
-    },
-    { field: 'channel', minWidth: 95, maxWidth: 125 },
-    { field: 'time', headerName: 'Last message', minWidth: 88, maxWidth: 112 },
-    {
-      field: 'status',
-      minWidth: 110,
-      maxWidth: 135,
-      cellRenderer: ({ value }: ICellRendererParams<Conversation, ConversationStatus>) => value === 'Needs reply'
-        ? <span className="needs-reply-label">Needs reply</span>
-        : value,
     },
   ], [])
 
@@ -1690,9 +1724,10 @@ function Inbox({
               theme={reactantGridTheme}
               rowData={conversations}
               columnDefs={conversationColumns}
-              defaultColDef={{ sortable: true, resizable: true, filter: true }}
+              defaultColDef={{ sortable: false, resizable: false, filter: false }}
               getRowId={({ data }) => data.id}
               rowHeight={68}
+              headerHeight={0}
               getRowClass={({ data }) => data?.id === selectedConversation?.id ? 'inbox-grid-row-selected' : undefined}
               onRowClicked={({ data }) => { if (data) setSelected(data.id) }}
               onCellKeyDown={({ event, data }) => {
@@ -1924,6 +1959,8 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [error, setError] = useState('')
   const [telegramSetup, setTelegramSetup] = useState<TelegramSetup | null>(null)
   const [telegramSetupFor, setTelegramSetupFor] = useState<string | null>(null)
+  const [paypalSetup, setPaypalSetup] = useState<(PayPalWebhookSetup & { integrationId: string }) | null>(null)
+  const [paypalWebhookId, setPaypalWebhookId] = useState('')
   const [websiteInstall, setWebsiteInstall] = useState<WebsiteChatInstall | null>(null)
   const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
     { provider: 'WooCommerce', key: 'woocommerce', description: 'Sync products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
@@ -1964,6 +2001,36 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     return updated
   }
 
+  async function loadPayPalWebhookSetup(integrationId: string) {
+    const setup = await apiRequest<PayPalWebhookSetup>(
+      businessPath(businessId, `/integrations/${integrationId}/paypal-webhook`),
+    )
+    setPaypalSetup({ ...setup, integrationId })
+    setPaypalWebhookId('')
+  }
+
+  async function savePayPalWebhookSetup(integrationId: string) {
+    if (!paypalWebhookId.trim()) return
+    setSaving(true)
+    setError('')
+    try {
+      const setup = await apiRequest<PayPalWebhookSetup>(
+        businessPath(businessId, `/integrations/${integrationId}/paypal-webhook`),
+        {
+          method: 'PUT',
+          body: JSON.stringify({ webhook_id: paypalWebhookId.trim() }),
+        },
+      )
+      setPaypalSetup({ ...setup, integrationId })
+      setPaypalWebhookId('')
+      notify('PayPal webhook configured.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The PayPal webhook could not be configured.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function createConnection(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!dialogProvider) return
@@ -1999,7 +2066,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
         : {
             consumer_key: String(formData.get('paypal_client_id') ?? ''),
             consumer_secret: String(formData.get('paypal_client_secret') ?? ''),
-            webhook_id: String(formData.get('paypal_webhook_id') ?? ''),
           }
     setSaving(true)
     setError('')
@@ -2117,6 +2183,29 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                   <small>{telegramSetup.webhook_url}</small>
                 </div>
               )}
+              {provider.key === 'paypal' && connection && paypalSetup?.integrationId === connection.id && (
+                <div className="integration-setup-details">
+                  <strong>PayPal webhook URL</strong>
+                  <small>Create a webhook for this exact URL in the PayPal Developer Dashboard.</small>
+                  <code className="integration-webhook-url">{paypalSetup.webhook_url}</code>
+                  <label className="field-label" htmlFor={`paypal-webhook-id-${connection.id}`}>PayPal webhook ID</label>
+                  <input
+                    className="integration-webhook-input"
+                    id={`paypal-webhook-id-${connection.id}`}
+                    value={paypalWebhookId}
+                    onChange={(event) => setPaypalWebhookId(event.target.value)}
+                    placeholder={paypalSetup.configured ? 'Saved securely; enter to replace' : 'Paste the webhook ID'}
+                    autoComplete="off"
+                  />
+                  <small>The ID is stored encrypted with this business’s PayPal credentials.</small>
+                  <Button
+                    variant="soft"
+                    color="gray"
+                    disabled={saving || !paypalWebhookId.trim()}
+                    onClick={() => void savePayPalWebhookSetup(connection.id)}
+                  >Save webhook ID</Button>
+                </div>
+              )}
               {provider.key === 'website_chat' && connection && websiteInstall?.business_id === businessId && (
                 <div className="integration-setup-details">
                   <strong>Install on your website</strong>
@@ -2172,6 +2261,10 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                       <div className="integration-card-actions-buttons">
                         {provider.key === 'telegram' && !connected && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Verify connection</Button>}
                         {provider.key !== 'telegram' && provider.key !== 'shopify' && provider.key !== 'website_chat' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
+                        {provider.key === 'paypal' && <Button variant="soft" color="gray" disabled={saving} onClick={() => {
+                          setError('')
+                          void loadPayPalWebhookSetup(connection.id).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'PayPal webhook details could not be loaded.'))
+                        }}>Webhook setup</Button>}
                         {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
                         {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>}
                       </div>
@@ -2206,7 +2299,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
               : dialogProvider === 'Website chat'
                 ? 'Register the exact site origin. Use HTTPS in production; localhost is accepted for local testing.'
-                  : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
+                  : 'Use the REST app credentials from PayPal. After saving them, Reactant will show the webhook URL; then create the webhook and save its ID.'}
           </Dialog.Description>
           <form className="connection-form" onSubmit={(event) => void createConnection(event)}>
             {dialogProvider === 'Website chat' ? (
@@ -2243,9 +2336,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 <SecretTextField id="paypal-client-id" name="paypal_client_id" label="PayPal REST app client ID" />
                 <label className="field-label" htmlFor="paypal-client-secret">PayPal REST app secret</label>
                 <SecretTextField id="paypal-client-secret" name="paypal_client_secret" label="PayPal REST app secret" />
-                <label className="field-label" htmlFor="paypal-webhook-id">PayPal webhook ID</label>
-                <SecretTextField id="paypal-webhook-id" name="paypal_webhook_id" label="PayPal webhook ID" />
-                <p className="form-note">Create an app and webhook in PayPal Developer. Reactant never receives permission to access your balance or move funds.</p>
+                <p className="form-note">Use Sandbox app credentials for testing. After connecting, open Webhook setup, create a webhook using the URL Reactant provides, and save its ID. Reactant never receives permission to access your balance or move funds.</p>
               </>
             )}
             {error && <p className="api-error" role="alert">{error}</p>}
@@ -2383,7 +2474,7 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
   )
 }
 
-function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { businessId: string; notify: (message: string) => void; decideApproval: (id: string, decision: 'approved' | 'rejected') => Promise<void>; approvals: Approval[] }) {
+function OwnerAssistant({ businessId, decideApproval, approvals }: { businessId: string; decideApproval: (id: string, decision: 'approved' | 'rejected') => Promise<void>; approvals: Approval[] }) {
   const [messages, setMessages] = useState<OwnerMessage[] | null>(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -2465,7 +2556,6 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
       setMessages((items) => [...(items ?? []), accepted.message])
       setPendingRuns((runs) => [...runs, accepted.agent_run_id])
       setDraft('')
-      notify('Message queued for the Business Agent.')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Your message could not be sent.')
     } finally {
@@ -2582,6 +2672,135 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
           <small id="owner-composer-help" className="owner-composer-help">Enter to send · Shift+Enter for a new line · Private to this workspace.</small>
         </form>
       </section>
+    </div>
+  )
+}
+
+function OwnerCenter({
+  userName,
+  userEmail,
+  currentBusiness,
+  businesses,
+  selectBusiness,
+  createBusiness,
+  signOut,
+}: {
+  userName: string
+  userEmail: string
+  currentBusiness: Business
+  businesses: Business[]
+  selectBusiness: (business: Business) => void
+  createBusiness: (name: string) => Promise<Business>
+  signOut: () => void
+}) {
+  const [businessName, setBusinessName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState('')
+  const apimaticPortalUrl = import.meta.env.VITE_APIMATIC_PORTAL_URL?.trim()
+  const openApiSpecUrl = import.meta.env.VITE_OPENAPI_SPEC_URL?.trim() || `${publicApiBaseUrl}/openapi.json`
+
+  async function submitBusiness(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = businessName.trim()
+    if (!name || creating) return
+    setCreating(true)
+    setError('')
+    try {
+      await createBusiness(name)
+      setBusinessName('')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The business could not be created.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="page-body owner-center-page">
+      <PageHeading
+        title="Owner center"
+        description="Manage your account, switch between businesses, and find developer resources."
+      />
+      <section className="owner-center-profile panel">
+        <span className="owner-center-avatar">{nameInitials(userName)}</span>
+        <span className="owner-center-identity">
+          <strong>{userName}</strong>
+          <small>{userEmail || 'Email address unavailable'}</small>
+        </span>
+        <Button variant="soft" color="gray" onClick={signOut}><SignOut size={16} /> Sign out</Button>
+      </section>
+
+      <div className="owner-center-layout">
+        <section className="panel owner-center-businesses">
+          <div className="owner-center-section-heading">
+            <span className="owner-center-section-icon"><BuildingOffice size={18} /></span>
+            <span><h2>Your businesses</h2><p>Choose a workspace or create another business.</p></span>
+          </div>
+          <div className="owner-center-business-list">
+            {businesses.map((item) => {
+              const isCurrent = item.id === currentBusiness.id
+              return (
+                <button
+                  type="button"
+                  className={`owner-center-business ${isCurrent ? 'owner-center-business-current' : ''}`}
+                  key={item.id}
+                  onClick={() => selectBusiness(item)}
+                  aria-current={isCurrent ? 'true' : undefined}
+                >
+                  <span className="owner-center-business-mark">{nameInitials(item.name).slice(0, 1)}</span>
+                  <span className="owner-center-business-copy"><strong>{item.name}</strong><small>{item.role?.replace('_', ' ') ?? 'Workspace member'}</small></span>
+                  <span className="owner-center-business-state">{isCurrent ? 'Current' : 'Switch'}</span>
+                </button>
+              )
+            })}
+          </div>
+          <form className="owner-center-create-form" onSubmit={(event) => void submitBusiness(event)}>
+            <label htmlFor="owner-center-business-name">Create a business</label>
+            <div className="owner-center-create-row">
+              <input
+                id="owner-center-business-name"
+                value={businessName}
+                onChange={(event) => setBusinessName(event.target.value)}
+                placeholder="Business name"
+                maxLength={160}
+                required
+              />
+              <Button type="submit" disabled={creating || !businessName.trim()}>
+                <Plus size={16} /> {creating ? 'Creating...' : 'Create'}
+              </Button>
+            </div>
+            {error && <p className="api-error" role="alert">{error}</p>}
+          </form>
+        </section>
+
+        <section className="panel owner-center-developer">
+          <div className="owner-center-section-heading">
+            <span className="owner-center-section-icon"><Code size={18} /></span>
+            <span><h2>Developer</h2><p>API reference, authentication, and client SDKs.</p></span>
+          </div>
+          <div className="owner-center-api-details">
+            <span>API base URL</span>
+            <code>{publicApiBaseUrl}</code>
+          </div>
+          <div className="owner-center-doc-links">
+            <a href={openApiSpecUrl} target="_blank" rel="noreferrer">
+              <span><strong>OpenAPI definition</strong><small>View or import the API schema</small></span>
+              <ArrowUpRight size={16} />
+            </a>
+            {apimaticPortalUrl
+              ? <a href={apimaticPortalUrl} target="_blank" rel="noreferrer">
+                  <span><strong>APIMatic developer portal</strong><small>Documentation and generated SDKs</small></span>
+                  <ArrowUpRight size={16} />
+                </a>
+              : <p className="owner-center-config-note">Set <code>VITE_APIMATIC_PORTAL_URL</code> in the frontend environment to link your APIMatic portal. The OpenAPI definition can be imported into APIMatic to publish docs and generate SDKs.</p>}
+          </div>
+          <div className="owner-center-auth-note">
+            <strong>Authentication</strong>
+            <p>Send the signed-in user’s Supabase access token as a bearer token. Business data remains scoped to the selected workspace.</p>
+            <pre><code>{`Authorization: Bearer <supabase_access_token>`}</code></pre>
+          </div>
+        </section>
+      </div>
     </div>
   )
 }

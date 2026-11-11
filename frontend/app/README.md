@@ -13,7 +13,7 @@ VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
 
 The Supabase URL and public key must belong to the same project configured in
 the Render backend. The backend must include
-`https://reactant-theta.vercel.app` in `ALLOWED_WEB_ORIGINS`.
+`https://getreactant.vercel.app` in `ALLOWED_WEB_ORIGINS`.
 
 For local development only, `.env.local` uses
 `http://localhost:8000/api/v1`.

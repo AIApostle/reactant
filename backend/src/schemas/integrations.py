@@ -33,6 +33,10 @@ class IntegrationCreate(RequestModel):
     credentials: IntegrationCredentials
 
 
+class PayPalWebhookConfigurationRequest(RequestModel):
+    webhook_id: str = Field(min_length=1, max_length=256)
+
+
 class IntegrationResponse(RequestModel):
     id: UUID
     provider: str
@@ -50,6 +54,11 @@ class TelegramSetupResponse(RequestModel):
     webhook_url: AnyHttpUrl
     bot_username: str
     bot_name: str
+
+
+class PayPalWebhookSetupResponse(RequestModel):
+    webhook_url: AnyHttpUrl
+    configured: bool
 
 
 class IntegrationAuthorizationResponse(RequestModel):

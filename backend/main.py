@@ -98,7 +98,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    openapi_url=None if is_production else "/api/v1/openapi.json",
+    openapi_url="/api/v1/openapi.json",
     docs_url=None if is_production else "/api/v1/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -133,7 +133,7 @@ allowed_origins = [
     origin.strip()
     for origin in os.getenv(
         "ALLOWED_WEB_ORIGINS",
-        "https://reactant-theta.vercel.app,http://localhost:5173",
+        "https://getreactant.vercel.app,http://localhost:5173",
     ).split(",")
     if origin.strip()
 ]

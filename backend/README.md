@@ -68,10 +68,11 @@ Additional configuration:
 - `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are legacy backend settings and
   are not used by AgentCard. AgentCard uses the encrypted PayPal credentials
   connected by each business; it never falls back to deployment credentials.
-- `APP_ENV=production` disables the generated OpenAPI and Swagger endpoints.
+- The OpenAPI definition is available at `/api/v1/openapi.json` in every
+  environment so APIMatic can import the current API contract. Swagger UI at
+  `/api/v1/docs` remains disabled in production.
 
-In development, OpenAPI is available at `/api/v1/openapi.json` and Swagger UI
-at `/api/v1/docs`.
+In development, Swagger UI is available at `/api/v1/docs`.
 
 ## Supabase schema
 
