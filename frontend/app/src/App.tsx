@@ -541,6 +541,14 @@ function App() {
           try {
             const message = JSON.parse(event.data) as { type?: string; data?: { conversation_id?: string } }
             window.dispatchEvent(new CustomEvent('reactant:realtime', { detail: message }))
+            if (message.type?.startsWith('approval.')) {
+              void apiRequest<Approval[]>(
+                businessPath(businessId, '/approvals?status=pending&limit=100'),
+                { cache: 'no-store' },
+              ).then((rows) => {
+                if (active) setApprovals(rows)
+              }).catch(() => undefined)
+            }
             if (!message.type?.startsWith('conversation.')) return
             const conversationId = message.data?.conversation_id
             if (conversationId && conversationId === selectedConversationRef.current) {

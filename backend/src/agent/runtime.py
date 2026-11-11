@@ -373,6 +373,73 @@ def build_business_agent(
             return {"status": "saved"}
 
         tools.extend([search_business_memory, remember_business_fact])
+    if (
+        audience == "customer"
+        and conversation_id is not None
+        and idempotency_key is not None
+    ):
+        @tool
+        def request_customer_handoff(summary: str) -> dict[str, Any]:
+            """Record a customer's explicit request for a team member to follow up when checkout needs human help. Only call this after the customer asks to buy or requests a person."""
+            normalized_summary = summary.strip()
+            if not normalized_summary or len(normalized_summary) > 2000:
+                raise ValueError("Provide a handoff summary of 1 to 2000 characters.")
+
+            request_key = (
+                "customer-handoff:"
+                + hashlib.sha256(idempotency_key.encode()).hexdigest()
+            )
+            existing = execute(
+                client.table("approvals")
+                .select("id,status,action_type,impact")
+                .eq("business_id", business_id)
+                .eq("request_idempotency_key", request_key)
+                .maybe_single()
+            )
+            if existing is None:
+                approval = execute(
+                    client.table("approvals")
+                    .insert(
+                        {
+                            "business_id": business_id,
+                            "action_type": "customer_checkout_handoff",
+                            "status": "pending",
+                            "impact": {
+                                "summary": normalized_summary,
+                                "customer_name": customer_name[:160],
+                                "conversation_id": conversation_id,
+                            },
+                            "expires_at": None,
+                            "requested_by": "customer_agent",
+                            "request_idempotency_key": request_key,
+                        }
+                    )
+                    .select("id,status,action_type,impact")
+                    .single()
+                )
+                if not isinstance(approval, dict):
+                    raise RuntimeError("The customer handoff request could not be created.")
+                execute(
+                    client.table("outbox_events").insert(
+                        {
+                            "business_id": business_id,
+                            "event_type": "approval.created",
+                            "topic": "approvals",
+                            "data": {"approval_id": approval["id"]},
+                            "dedupe_key": f"approval-created:{approval['id']}",
+                        }
+                    )
+                )
+            else:
+                approval = existing
+
+            return {
+                "approval_id": approval["id"],
+                "status": approval["status"],
+                "message": "The customer's request is recorded for team follow-up.",
+            }
+
+        tools.append(request_customer_handoff)
     if audience == "owner" and agent_run_id is not None:
         @tool
         def create_approval_request(
@@ -461,15 +528,23 @@ def build_business_agent(
             }
 
         tools.append(create_approval_request)
-    if (
-        audience == "customer"
-        and get_supabase_settings().agentcard_enabled
-        and bool((agent_config or {}).get("permissions", {}).get("create_carts_and_orders"))
-        and bool((agent_config or {}).get("permissions", {}).get("create_paypal_checkout"))
-        and conversation_id is not None
-        and idempotency_key is not None
-        and created_checkout_urls is not None
-    ):
+    checkout_tool_reasons: list[str] = []
+    if audience == "customer":
+        supabase_settings = get_supabase_settings()
+        permissions = (agent_config or {}).get("permissions", {})
+        if not supabase_settings.agentcard_enabled:
+            checkout_tool_reasons.append("AGENTCARD_ENABLED_disabled")
+        if not permissions.get("create_carts_and_orders"):
+            checkout_tool_reasons.append("create_carts_and_orders_disabled")
+        if not permissions.get("create_paypal_checkout"):
+            checkout_tool_reasons.append("create_paypal_checkout_disabled")
+        if conversation_id is None:
+            checkout_tool_reasons.append("conversation_id_missing")
+        if idempotency_key is None:
+            checkout_tool_reasons.append("idempotency_key_missing")
+        if created_checkout_urls is None:
+            checkout_tool_reasons.append("checkout_url_collection_missing")
+    if audience == "customer" and not checkout_tool_reasons:
         @tool
         def create_agentcard_transaction(
             items: list[dict[str, Any]],
@@ -516,6 +591,12 @@ def build_business_agent(
             }
 
         tools.append(create_agentcard_transaction)
+    elif audience == "customer":
+        logger.info(
+            "AgentCard checkout tool not registered business_id=%s reasons=%s",
+            business_id,
+            ",".join(checkout_tool_reasons),
+        )
 
     if settings.model_api_key is None:
         raise RuntimeError(

@@ -356,6 +356,91 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("create_agentcard_transaction", agent.tool_registry.registry)
 
+    def test_customer_agent_logs_checkout_tool_gate_reasons(self) -> None:
+        with (
+            patch(
+                "src.agent.runtime.get_supabase_settings",
+                return_value=SimpleNamespace(agentcard_enabled=False),
+            ),
+            patch("src.agent.runtime.get_memory_config", return_value=None),
+            self.assertLogs("src.agent.runtime", level="INFO") as logs,
+        ):
+            agent = build_business_agent(
+                client=ProductClient(),
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store"},
+                agent_config={"permissions": {}},
+                history=[],
+                audience="customer",
+                conversation_id="conversation-a",
+                idempotency_key="telegram:update-a",
+                created_checkout_urls=[],
+            )
+
+        self.assertNotIn("create_agentcard_transaction", agent.tool_registry.registry)
+        self.assertIn("AGENTCARD_ENABLED_disabled", logs.output[0])
+        self.assertIn("create_carts_and_orders_disabled", logs.output[0])
+        self.assertIn("create_paypal_checkout_disabled", logs.output[0])
+
+    def test_customer_agent_records_checkout_handoff_as_pending_approval(self) -> None:
+        approval_id = str(uuid4())
+        created_approval = {
+            "id": approval_id,
+            "status": "pending",
+            "action_type": "customer_checkout_handoff",
+            "impact": {"summary": "Grey Vintage Shirt, quantity 2"},
+        }
+        client = MagicMock()
+        with (
+            patch(
+                "src.agent.runtime.get_supabase_settings",
+                return_value=SimpleNamespace(agentcard_enabled=False),
+            ),
+            patch("src.agent.runtime.get_memory_config", return_value=None),
+            patch(
+                "src.agent.runtime.execute",
+                side_effect=[None, created_approval, None, created_approval],
+            ) as execute_query,
+        ):
+            agent = build_business_agent(
+                client=client,
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store"},
+                agent_config={"permissions": {}},
+                history=[],
+                audience="customer",
+                conversation_id="conversation-a",
+                customer_name="Acha",
+                idempotency_key="telegram:update-a",
+            )
+            result = agent.tool_registry.registry[
+                "request_customer_handoff"
+            ]._tool_func(summary="Grey Vintage Shirt, quantity 2")
+            repeated_result = agent.tool_registry.registry[
+                "request_customer_handoff"
+            ]._tool_func(summary="Grey Vintage Shirt, quantity 2")
+
+        self.assertEqual(result["approval_id"], approval_id)
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(repeated_result["approval_id"], approval_id)
+        self.assertEqual(execute_query.call_count, 4)
+        self.assertEqual(client.table.return_value.insert.call_count, 2)
+        inserted_approval = client.table.return_value.insert.call_args_list[0].args[0]
+        self.assertEqual(inserted_approval["action_type"], "customer_checkout_handoff")
+        self.assertEqual(inserted_approval["requested_by"], "customer_agent")
+        self.assertEqual(inserted_approval["impact"]["customer_name"], "Acha")
+        self.assertEqual(inserted_approval["impact"]["conversation_id"], "conversation-a")
+        inserted_event = client.table.return_value.insert.call_args_list[1].args[0]
+        self.assertEqual(inserted_event["event_type"], "approval.created")
+
     def test_customer_memory_tools_are_not_registered_without_opt_in(self) -> None:
         with (
             patch("src.agent.runtime.get_memory_config") as get_memory,
