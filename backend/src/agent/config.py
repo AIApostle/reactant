@@ -19,6 +19,10 @@ class AgentRuntimeSettings(BaseSettings):
     strands_worker_poll_seconds: float = Field(default=2, ge=0.5, le=60)
 
 
+def agent_is_enabled(agent_config: dict[str, object] | None) -> bool:
+    return isinstance(agent_config, dict) and agent_config.get("enabled") is True
+
+
 @lru_cache(maxsize=1)
 def get_agent_runtime_settings() -> AgentRuntimeSettings:
     return AgentRuntimeSettings()

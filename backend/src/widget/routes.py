@@ -16,7 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, WebSocke
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from supabase import Client
 
-from src.agent.config import get_agent_runtime_settings
+from src.agent.config import agent_is_enabled, get_agent_runtime_settings
 from src.agent.customer_images import (
     CustomerImage,
     decode_customer_image_data_uri,
@@ -192,7 +192,7 @@ def _agent_settings(client: Client, business_id: str) -> tuple[dict[str, Any], d
     )
     agent_config = execute(
         client.table("agent_configs")
-        .select("business_context,tone,handoff_rule,permissions,approval_policy")
+        .select("enabled,business_context,tone,handoff_rule,permissions,approval_policy")
         .eq("business_id", business_id)
         .maybe_single()
     )
@@ -223,6 +223,12 @@ def _process_widget_message(
         .limit(8)
     )
     business, agent_config = _agent_settings(client, business_id)
+    if not agent_is_enabled(agent_config):
+        logger.info(
+            "Website chat agent response skipped because the business agent is disabled business_id=%s",
+            business_id,
+        )
+        return
     conversation = execute(
         client.table("conversations")
         .select("customer_context")

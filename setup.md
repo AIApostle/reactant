@@ -106,10 +106,14 @@ backend-only and are loaded from `backend/.env`.
 5. Apply `backend/src/supabase/migrations/0004_chat_widgets_and_memory.sql`
    if it has not already been applied.
 6. Apply `backend/src/supabase/migrations/0005_customer_chat_images.sql`.
-7. Enable email/password Auth.
-8. For local testing, keep email confirmation disabled or use confirmed test
+7. Apply `backend/src/supabase/migrations/0006_integration_allowed_origins.sql`
+    if it has not already been applied.
+8. Apply `backend/src/supabase/migrations/0007_sync_agent_status.sql` to
+    reconcile existing agent status values with their enabled setting.
+9. Enable email/password Auth.
+10. For local testing, keep email confirmation disabled or use confirmed test
    users.
-9. Confirm the private `product-media`, `agentcard-receipts`, and
+11. Confirm the private `product-media`, `agentcard-receipts`, and
    `customer-chat-media` buckets exist; migrations 0003 and 0005 create the
    AgentCard and customer image buckets.
 

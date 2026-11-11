@@ -1181,6 +1181,17 @@
 .catalog-data-grid {
   height: min(68vh, 720px);
   min-height: 420px;
+  --ag-row-hover-color: #fafbfa;
+}
+
+.catalog-data-grid .ag-header-cell.catalog-agent-access-header .ag-header-cell-label {
+  justify-content: center;
+}
+
+.catalog-data-grid .ag-cell.catalog-agent-access-cell .ag-cell-value {
+  display: flex;
+  width: 100%;
+  justify-content: center;
 }
 
 .catalog-grid-product {
@@ -4302,31 +4313,32 @@
 }
 
 .catalog-agent-access {
-  display: inline-flex;
+  display: grid;
+  width: 32px;
+  height: 32px;
   align-items: center;
-  gap: 7px;
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 1px solid #e8ece8;
-  border-radius: 8px;
+  justify-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: #68756c;
-  background: #fff;
+  background: transparent;
   font: inherit;
-  font-size: 10px;
-  font-weight: 560;
   cursor: pointer;
-  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+  transition: color 150ms ease, background 150ms ease, transform 150ms ease;
 }
 
 .catalog-agent-enabled {
-  border-color: #d4e5d7;
-  color: #286744;
-  background: #f2f8f2;
+  color: #557760;
 }
 
 .catalog-agent-access:hover {
-  border-color: #cbd9ce;
-  color: #286744;
+  color: #41694c;
+  background: #f5f7f5;
+}
+
+.catalog-agent-access:active {
+  transform: scale(0.96);
 }
 
 .catalog-agent-access:focus-visible,

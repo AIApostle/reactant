@@ -1445,6 +1445,8 @@ function Catalog({
     {
       field: 'agentCanShare',
       headerName: 'Agent access',
+      headerClass: 'catalog-agent-access-header',
+      cellClass: 'catalog-agent-access-cell',
       minWidth: 140,
       cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
         <button
@@ -1457,8 +1459,7 @@ function Catalog({
           aria-pressed={data.agentCanShare}
           aria-label={`${data.agentCanShare ? 'Hide' : 'Allow'} ${data.name} ${data.agentCanShare ? 'from' : 'for'} agent sharing`}
         >
-          {data.agentCanShare ? <Eye size={14} /> : <EyeSlash size={14} />}
-          {data.agentCanShare ? 'Visible to agent' : 'Hidden from agent'}
+          {data.agentCanShare ? <Eye size={16} /> : <EyeSlash size={16} />}
         </button>
       ) : null,
     },
@@ -2363,6 +2364,7 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
 }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
   async function saveAgent() {
     if (!config || !etag) {
@@ -2389,6 +2391,7 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
       })
       setConfig(data)
       setEtag(headers.get('ETag'))
+      setHasUnsavedChanges(false)
       notify('Business Agent settings saved.')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Agent settings could not be saved.')
@@ -2397,7 +2400,10 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
     }
   }
 
-  const updateConfig = (update: Partial<AgentConfig>) => setConfig((current) => current ? { ...current, ...update } : current)
+  const updateConfig = (update: Partial<AgentConfig>) => {
+    setHasUnsavedChanges(true)
+    setConfig((current) => current ? { ...current, ...update } : current)
+  }
   const permissionRows: { key: keyof AgentConfig['permissions']; title: string; description: string; blocked?: boolean }[] = [
     { key: 'answer_product_questions', title: 'Answer product questions', description: 'Use active products from your connected store and catalog.' },
     { key: 'share_product_images', title: 'Share product images', description: 'Send product photos to customers through supported channels.' },
@@ -2417,7 +2423,7 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
         <div className="agent-settings-column">
           <section className="panel agent-control-panel">
             <div className="agent-control-heading"><div className="agent-avatar"><Robot size={23} weight="duotone" /></div><div><h2>Customer support agent</h2><p>Shared across your connected channels</p></div><div className="agent-toggle"><span>{config.enabled ? 'Active' : 'Paused'}</span><Switch checked={config.enabled} onCheckedChange={(enabled) => updateConfig({ enabled })} aria-label="Enable business agent" /></div></div>
-            <div className={`agent-state-note ${config.enabled ? '' : 'agent-paused-note'}`}><span className={`agent-indicator ${config.enabled ? 'is-on' : 'is-off'}`} /><span>{config.enabled ? `Agent status: ${config.status}. Changes take effect after saving.` : 'Your agent is paused. Save to apply this change.'}</span></div>
+            <div className={`agent-state-note ${config.enabled ? '' : 'agent-paused-note'}`}><span className={`agent-indicator ${config.enabled ? 'is-on' : 'is-off'}`} /><span>Agent status: {config.enabled ? 'active' : 'disabled'}. {hasUnsavedChanges ? 'Changes take effect after saving.' : 'Settings saved.'}</span></div>
           </section>
           <section className="panel settings-section">
             <div className="settings-section-heading"><h2>Business profile</h2><p>Give the agent accurate context to represent your business.</p></div>

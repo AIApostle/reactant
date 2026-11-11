@@ -109,6 +109,11 @@ def update_agent_config(
         )
     require_matching_etag(if_match, current["version"])
     changes = body.model_dump(exclude_unset=True, exclude={"permissions", "approval_policy"})
+    if body.enabled is None:
+        changes.pop("enabled", None)
+    changes["status"] = (
+        "active" if changes.get("enabled", current["enabled"]) else "disabled"
+    )
     if body.permissions is not None:
         changes["permissions"] = {
             **DEFAULT_PERMISSIONS,

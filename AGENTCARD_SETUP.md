@@ -24,7 +24,7 @@ including:
 - `backend/src/supabase/migrations/0001_core_schema.sql`
 - `backend/src/supabase/migrations/0002_strands_agent_queue.sql`
 - `backend/src/supabase/migrations/0003_agentcard_transactions.sql`
-- Migrations `0004` through `0006`
+- Migrations `0004` through `0007`
 
 Migration 0003 creates the transaction, checkout, payment, webhook, refund,
 and receipt tables, their access policies and service-role functions, and the

@@ -17,7 +17,7 @@ from supabase import Client
 
 from src.schemas.common import ResourceEnvelope
 from src.schemas.webhooks import ProviderWebhookPayload, WebhookAck
-from src.agent.config import get_agent_runtime_settings
+from src.agent.config import agent_is_enabled, get_agent_runtime_settings
 from src.agent.customer_images import (
     MAX_CUSTOMER_IMAGE_BYTES,
     CustomerImage,
@@ -436,10 +436,16 @@ def _process_telegram_update(
     )
     agent_config = execute(
         client.table("agent_configs")
-        .select("business_context,tone,handoff_rule,permissions,approval_policy")
+        .select("enabled,business_context,tone,handoff_rule,permissions,approval_policy")
         .eq("business_id", str(business_id))
         .maybe_single()
     )
+    if not agent_is_enabled(agent_config):
+        logger.info(
+            "Telegram agent response skipped because the business agent is disabled business_id=%s",
+            business_id,
+        )
+        return
     settings = get_agent_runtime_settings()
     if not settings.strands_agent_enabled or settings.openrouter_api_key is None:
         return
