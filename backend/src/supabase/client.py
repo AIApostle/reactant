@@ -42,7 +42,13 @@ class SupabaseSettings(BaseSettings):
     shopify_scopes: str = "read_products,read_inventory,read_orders"
     paypal_client_id: SecretStr | None = None
     paypal_secret_key: SecretStr | None = None
-    paypal_partner_attribution_id: str | None = None
+    paypal_partner_attribution_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "PAYPAL_PARTNER_ATTRIBUTION_ID",
+            "PAYPAL_BN_CODE",
+        ),
+    )
     memwal_delegate_key: SecretStr | None = None
     memwal_account_id: str | None = None
     memwal_server_url: str | None = None

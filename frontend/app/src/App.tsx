@@ -2510,7 +2510,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                     </>
                   : provider.key === 'paypal' ? (
                     <form className="integration-setup-details" onSubmit={(event) => void connectPaypalSeller(event)}>
-                      <label className="field-label" htmlFor="paypal-seller-email">Business PayPal account email</label>
+                      <label className="field-label" htmlFor="paypal-seller-email">Sandbox seller PayPal email</label>
                       <input
                         className="integration-webhook-input"
                         id="paypal-seller-email"
@@ -2519,8 +2519,9 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                         required
                         value={paypalSellerEmail}
                         onChange={(event) => setPaypalSellerEmail(event.target.value)}
-                        placeholder="payments@business.example"
+                        placeholder="seller@business.example"
                       />
+                      <small>Use the email for a PayPal Sandbox business seller account. Reactant’s app credentials and BN code are configured on the backend; do not enter a client ID or secret here.</small>
                       <Button type="submit" disabled={saving || !paypalSellerEmail.trim()}>
                         {saving ? 'Connecting...' : 'Connect PayPal account'}
                       </Button>

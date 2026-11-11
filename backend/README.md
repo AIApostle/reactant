@@ -67,6 +67,7 @@ Additional configuration:
   enabled the **Onboard after payment** capability for Reactant's partner REST
   app. The code flag does not enable the capability in PayPal's dashboard.
 - `PAYPAL_PARTNER_ATTRIBUTION_ID` — Reactant's BN attribution code, backend-only.
+  Existing local environments may keep using `PAYPAL_BN_CODE`.
 - `PAYPAL_RECEIVING_COUNTRIES` — comma-separated business country allowlist;
   defaults to `US`.
 - `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are backend-only platform app

@@ -1,3 +1,4 @@
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,9 +9,26 @@ from pydantic import SecretStr
 from src.agentcard.paypal import PayPalError, platform_paypal_credentials
 from src.integrations.routes import _validate_provider_credentials
 from src.schemas.integrations import IntegrationCreate
+from src.supabase.client import SupabaseSettings
 
 
 class AgentCardPayPalSetupTests(unittest.TestCase):
+    def test_existing_bn_code_environment_variable_is_supported(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_PERISHABLE_KEY": "test-key",
+                "PAYPAL_BN_CODE": "sandbox-bn-code",
+                "PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED": "True",
+            },
+            clear=True,
+        ):
+            settings = SupabaseSettings(_env_file=None)
+
+        self.assertEqual(settings.paypal_partner_attribution_id, "sandbox-bn-code")
+        self.assertTrue(settings.paypal_onboarding_after_payment_enabled)
+
     def test_partner_mode_uses_server_credentials_and_seller_email(self) -> None:
         settings = SimpleNamespace(
             paypal_onboarding_after_payment_enabled=True,
