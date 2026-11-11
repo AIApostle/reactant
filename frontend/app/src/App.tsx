@@ -2407,8 +2407,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
               <p>{provider.description}</p>
               {provider.key === 'paypal' && (
                 <div className="integration-setup-details">
-                  <strong>PayPal Checkout with after-payment onboarding</strong>
-                  <small>Enter the business PayPal account email, not REST app credentials. PayPal must have enabled Onboard after payment for Reactant’s REST app. The first payment is sent to that seller and can remain pending while PayPal emails them to finish onboarding. A business PayPal account is required; incomplete onboarding after 30 days results in the payment being returned. Reactant’s app credentials and BN attribution stay on the backend.</small>
                   {connection?.sync_status === 'seller_onboarding_pending' && <small>Waiting for the seller to complete PayPal onboarding after the first payment.</small>}
                   {connection?.sync_status === 'seller_connected' && <small>The seller has completed PayPal onboarding.</small>}
                   {connection?.sync_status === 'seller_reauthorization_required' && <small>PayPal seller access was revoked. Disconnect this connection and reconnect the seller account.</small>}
@@ -2521,7 +2519,6 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                         onChange={(event) => setPaypalSellerEmail(event.target.value)}
                         placeholder="seller@business.example"
                       />
-                      <small>Use the email for a PayPal Sandbox business seller account. Reactant’s app credentials and BN code are configured on the backend; do not enter a client ID or secret here.</small>
                       <Button type="submit" disabled={saving || !paypalSellerEmail.trim()}>
                         {saving ? 'Connecting...' : 'Connect PayPal account'}
                       </Button>

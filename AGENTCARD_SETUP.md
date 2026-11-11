@@ -50,7 +50,7 @@ ALLOWED_WEB_ORIGINS=https://getreactant.vercel.app
 PUBLIC_API_BASE_URL=https://reactant.onrender.com
 PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
-PAYPAL_RECEIVING_COUNTRIES=US
+PAYPAL_RECEIVING_COUNTRIES=US,NG
 PAYPAL_CLIENT_ID=<reactant-sandbox-partner-app-client-id>
 PAYPAL_SECRET_KEY=<reactant-sandbox-partner-app-secret>
 PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
@@ -75,8 +75,9 @@ from Telegram or other supported customer conversations. The customer
 checkout itself uses public, token-scoped API routes.
 
 `PAYPAL_RECEIVING_COUNTRIES` is a comma-separated country allowlist. The
-business profile country must be included; Nigeria (`NG`) is explicitly
-blocked by the current eligibility check. Set `AGENTCARD_ENABLED=true` or
+business profile country must be included. Nigeria (`NG`) is allowed only for
+Sandbox tests when explicitly included in this list; Live checkout always
+blocks it. Set `AGENTCARD_ENABLED=true` or
 `AGENTCARD_ENABLED=True` in Render to enable AgentCard; both spellings are
 accepted. Set `PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true` only after PayPal has
 enabled **Onboard after payment** for Reactant's REST app. This code flag

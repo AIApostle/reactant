@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
+
 from src.agentcard.paypal import (
     PayPalError,
     _authenticated_request,
@@ -11,11 +13,77 @@ from src.agentcard.paypal import (
     verified_capture_details,
     verified_refund_details,
 )
+from src.agentcard.service import _verify_paypal_eligibility
 from src.agentcard.routes import process_verified_paypal_webhook
 from src.agentcard.receipts import _receipt_pdf
 
 
 class PayPalAmountTests(unittest.TestCase):
+    def test_nigeria_is_allowed_only_for_sandbox_when_in_country_allowlist(self) -> None:
+        client = MagicMock()
+        sandbox_settings = MagicMock(
+            agentcard_enabled=True,
+            paypal_api_base_url="https://api-m.sandbox.paypal.com",
+            paypal_receiving_countries="US,NG",
+        )
+        with (
+            patch(
+                "src.agentcard.service.get_supabase_settings",
+                return_value=sandbox_settings,
+            ),
+            patch(
+                "src.agentcard.service.execute",
+                return_value={"country": "NG"},
+            ),
+        ):
+            _verify_paypal_eligibility(client, "business-id")
+
+        live_settings = MagicMock(
+            agentcard_enabled=True,
+            paypal_api_base_url="https://api-m.paypal.com",
+            paypal_receiving_countries="US,NG",
+        )
+        with (
+            patch(
+                "src.agentcard.service.get_supabase_settings",
+                return_value=live_settings,
+            ),
+            patch(
+                "src.agentcard.service.execute",
+                return_value={"country": "NG"},
+            ),
+            self.assertRaises(HTTPException) as raised,
+        ):
+            _verify_paypal_eligibility(client, "business-id")
+        self.assertEqual(
+            raised.exception.detail["code"],
+            "paypal_merchant_ineligible",
+        )
+
+    def test_nigeria_sandbox_checkout_requires_explicit_country_allowlist(self) -> None:
+        settings = MagicMock(
+            agentcard_enabled=True,
+            paypal_api_base_url="https://api-m.sandbox.paypal.com",
+            paypal_receiving_countries="US",
+        )
+        with (
+            patch(
+                "src.agentcard.service.get_supabase_settings",
+                return_value=settings,
+            ),
+            patch(
+                "src.agentcard.service.execute",
+                return_value={"country": "NG"},
+            ),
+            self.assertRaises(HTTPException) as raised,
+        ):
+            _verify_paypal_eligibility(MagicMock(), "business-id")
+
+        self.assertEqual(
+            raised.exception.detail["code"],
+            "paypal_merchant_ineligible",
+        )
+
     def test_minor_units_use_exact_decimal_amounts(self) -> None:
         self.assertEqual(minor_to_paypal_amount(1), "0.01")
         self.assertEqual(minor_to_paypal_amount(12345), "123.45")

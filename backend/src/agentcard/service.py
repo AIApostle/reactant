@@ -101,7 +101,12 @@ def _verify_paypal_eligibility(client: Client, business_id: str) -> None:
         for value in settings.paypal_receiving_countries.split(",")
         if value.strip()
     }
-    if country == "NG" or country not in eligible_countries:
+    sandbox_api = (
+        settings.paypal_api_base_url.rstrip("/")
+        == "https://api-m.sandbox.paypal.com"
+    )
+    sandbox_nigeria_allowed = sandbox_api and country == "NG"
+    if country not in eligible_countries or (country == "NG" and not sandbox_nigeria_allowed):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={

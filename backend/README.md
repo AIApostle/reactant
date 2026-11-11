@@ -125,11 +125,10 @@ project before retrying.
   review.
 - Customer replies are durably queued, but their provider-delivery worker is
   not implemented. A `202` response means queued, not delivered.
-- The AgentCard checkout engine implements PayPal Sandbox checkout, customer
-  consent, server-verified capture, signed webhooks, refunds, reconciliation,
-  and receipts. Sandbox platform mode uses Reactant's test merchant; real
-  business seller linking is blocked pending PayPal Multiparty Partner
-  Referrals approval.
+- The AgentCard checkout engine supports PayPal seller-email checkout with
+  after-payment onboarding, customer consent, server-verified capture, signed
+  webhooks, refunds, reconciliation, and receipts. Seller onboarding and
+  payment capabilities still require PayPal approval and dashboard setup.
 - AgentCard is disabled until `AGENTCARD_ENABLED=true`, PayPal seller
   onboarding is approved and implemented, the business country is
   allowlisted, and the agent's order/PayPal permissions are enabled. These

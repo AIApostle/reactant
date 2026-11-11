@@ -1,7 +1,9 @@
+import logging
 import re
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
 from storage3.utils import StorageException
 
 from strands import Agent, tool
@@ -30,6 +32,7 @@ MAX_AGENT_TOTAL_TOKENS = 8000
 MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_PRODUCT_IMAGE_RESULTS = 3
+logger = logging.getLogger(__name__)
 PRODUCT_IMAGE_REQUEST = re.compile(
     r"\b(image|images|photo|photos|picture|pictures|show me|send me|see it)\b",
     re.I,
@@ -373,15 +376,31 @@ def build_business_agent(
                 items,
                 catalog_product_ids,
             )
-            result = create_agentcard_transaction_service(
-                client=client,
-                business_id=business_id,
-                conversation_id=conversation_id,
-                customer_name=customer_name,
-                customer_reference=customer_reference,
-                items=validated_items,
-                idempotency_key=idempotency_key,
-            )
+            try:
+                result = create_agentcard_transaction_service(
+                    client=client,
+                    business_id=business_id,
+                    conversation_id=conversation_id,
+                    customer_name=customer_name,
+                    customer_reference=customer_reference,
+                    items=validated_items,
+                    idempotency_key=idempotency_key,
+                )
+            except (HTTPException, ValueError) as error:
+                error_code = (
+                    error.detail.get("code", "http_error")
+                    if isinstance(error, HTTPException)
+                    and isinstance(error.detail, dict)
+                    else "catalog_item_validation"
+                    if isinstance(error, ValueError)
+                    else "http_error"
+                )
+                logger.warning(
+                    "AgentCard checkout creation failed business_id=%s error_code=%s",
+                    business_id,
+                    error_code,
+                )
+                raise
             checkout_url = result["checkout_url"]
             created_checkout_urls.append(checkout_url)
             return {

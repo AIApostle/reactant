@@ -17,6 +17,13 @@ class PayPalError(RuntimeError):
     pass
 
 
+PAYPAL_PARTNER_CONFIGURATION_MESSAGE = (
+    "PayPal is not configured on the backend. Check PAYPAL_CLIENT_ID, "
+    "PAYPAL_SECRET_KEY, PAYPAL_PARTNER_ATTRIBUTION_ID (or PAYPAL_BN_CODE), "
+    "PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED, and PAYPAL_API_BASE_URL."
+)
+
+
 def platform_paypal_credentials() -> dict[str, str]:
     settings = get_supabase_settings()
     if (
@@ -27,9 +34,7 @@ def platform_paypal_credentials() -> dict[str, str]:
         or settings.paypal_secret_key is None
         or not settings.paypal_partner_attribution_id
     ):
-        raise PayPalError(
-            "PayPal Multiparty after-payment onboarding is not configured."
-        )
+        raise PayPalError(PAYPAL_PARTNER_CONFIGURATION_MESSAGE)
     return {
         "client_id": settings.paypal_client_id.get_secret_value(),
         "client_secret": settings.paypal_secret_key.get_secret_value(),
@@ -123,7 +128,7 @@ def paypal_credentials(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "paypal_partner_not_configured",
-                "message": "PayPal Multiparty after-payment onboarding is not configured.",
+                "message": PAYPAL_PARTNER_CONFIGURATION_MESSAGE,
             },
         ) from error
     return {

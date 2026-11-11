@@ -14,6 +14,7 @@ from supabase import Client
 
 from src.auth.dependencies import AuthenticatedUser, get_current_user
 from src.agentcard.paypal import (
+    PAYPAL_PARTNER_CONFIGURATION_MESSAGE,
     PayPalError,
     platform_paypal_credentials,
     validate_paypal_credentials,
@@ -162,7 +163,7 @@ def _validate_provider_credentials(body: IntegrationCreate) -> dict[str, str]:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "code": "paypal_partner_not_configured",
-                    "message": "PayPal Multiparty after-payment onboarding is not configured. Businesses must not submit their PayPal app credentials.",
+                    "message": PAYPAL_PARTNER_CONFIGURATION_MESSAGE,
                 },
             ) from error
         credentials = {
@@ -752,7 +753,7 @@ def test_integration(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "code": "paypal_partner_not_configured",
-                    "message": "PayPal Multiparty after-payment onboarding is not configured.",
+                    "message": PAYPAL_PARTNER_CONFIGURATION_MESSAGE,
                 },
             ) from error
         try:
