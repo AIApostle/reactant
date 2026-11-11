@@ -63,6 +63,13 @@ class WidgetSessionTests(unittest.TestCase):
         )
         self.assertEqual(query, "blue hat")
 
+    def test_image_query_ignores_vague_product_reference_words(self) -> None:
+        query = routes._image_query(
+            "Can I see a picture of the product you guys have (my message)?",
+            [{"sender_type": "customer", "text": "Do you have shoes?"}],
+        )
+        self.assertEqual(query, "shoes")
+
     def test_customer_memory_namespaces_are_isolated_by_business_and_customer(self) -> None:
         first_business = str(uuid4())
         second_business = str(uuid4())

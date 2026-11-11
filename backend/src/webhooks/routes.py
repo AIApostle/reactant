@@ -29,6 +29,9 @@ from src.agent.runtime import (
     build_business_agent,
     find_business_products,
     invoke_business_agent,
+    product_image_attachments,
+    product_image_query,
+    product_image_reply,
 )
 from src.supabase.client import (
     get_service_supabase_client,
@@ -207,8 +210,26 @@ def _telegram_send_photo(bot_token: str, chat_id: str, image_url: str, caption: 
 
 
 def _wants_product_images(text: str) -> bool:
-    normalized = text.lower()
-    return any(term in normalized for term in ("image", "photo", "picture", "show me", "send me"))
+    return bool(re.search(r"\b(image|images|photo|photos|picture|pictures|show me|send me|see it)\b", text, re.I))
+
+
+def _mark_telegram_connected(client: Client, integration_id: UUID) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    execute(
+        client.table("integrations")
+        .update(
+            {
+                "status": "connected",
+                "connected_at": now,
+                "last_success_at": now,
+                "last_error": None,
+                "sync_status": "ready",
+                "updated_at": now,
+            }
+        )
+        .eq("id", str(integration_id))
+        .eq("provider", "telegram")
+    )
 
 
 def _telegram_download_image(bot_token: str, file_id: str) -> CustomerImage:
@@ -438,6 +459,7 @@ def _process_telegram_update(
         rows=history_rows,
     )
     created_checkout_urls: list[str] = []
+    selected_product_images: list[dict[str, Any]] = []
     agent = build_business_agent(
         client=client,
         business_id=str(business_id),
@@ -451,6 +473,7 @@ def _process_telegram_update(
         customer_reference=chat_id,
         idempotency_key=f"telegram:{channel_id}:{update_id}",
         created_checkout_urls=created_checkout_urls,
+        selected_product_images=selected_product_images,
         vision_enabled=bool(customer_images),
     )
     response_text = invoke_business_agent(
@@ -459,36 +482,53 @@ def _process_telegram_update(
         audience="customer",
         images=customer_images,
     )
+    image_requested = _wants_product_images(text)
+    image_products = selected_product_images
+    if image_requested:
+        image_query = product_image_query(text, history_rows)
+        if image_query:
+            matching_products = find_business_products(
+                client,
+                str(business_id),
+                image_query,
+                limit=3,
+            )
+            if matching_products:
+                image_products = matching_products
+    image_attachments = product_image_attachments(
+        image_products,
+        response_text,
+        explicitly_requested=image_requested,
+    )
     sent_image_attachments: list[dict[str, str]] = []
+    image_delivery_failed = False
     if created_checkout_urls:
         response_text = (
             f"{response_text}\n\nSecure checkout: {created_checkout_urls[-1]}"
         )
-    if _wants_product_images(text):
-        image_query = " ".join(
-            word for word in text.split()
-            if word.lower().strip(".,!?") not in {"show", "send", "me", "an", "a", "the", "image", "images", "photo", "photos", "picture", "pictures", "of"}
-        )
-        image_products = find_business_products(client, str(business_id), image_query or text, limit=3)
-        for product in image_products:
-            for image_url in product.get("image_urls", [])[:3]:
-                _telegram_send_photo(
-                    credentials["bot_token"],
-                    chat_id,
-                    image_url,
-                    caption=product["name"],
-                )
-                sent_image_attachments.append(
-                    {"type": "image", "url": image_url, "alt": product["name"]}
-                )
-        if image_products and any(product.get("image_urls") for product in image_products):
-            response_text = (
-                "I sent the available product image above."
-                if response_text.lower().find("can't") >= 0
-                or response_text.lower().find("cannot") >= 0
-                or response_text.lower().find("don't have") >= 0
-                else response_text
+    for attachment in image_attachments:
+        try:
+            _telegram_send_photo(
+                credentials["bot_token"],
+                chat_id,
+                attachment["url"],
+                caption=attachment["alt"],
             )
+        except RuntimeError as error:
+            image_delivery_failed = True
+            logger.error(
+                "Telegram product image delivery failed conversation_id=%s exception_type=%s",
+                conversation["id"],
+                type(error).__name__,
+            )
+        else:
+            sent_image_attachments.append(attachment)
+    response_text = product_image_reply(
+        response_text,
+        sent_image_attachments,
+        explicitly_requested=image_requested,
+        delivery_failed=image_delivery_failed,
+    )
     _telegram_send_message(credentials["bot_token"], chat_id, response_text)
     execute(
         client.table("customer_messages")
@@ -635,6 +675,7 @@ async def receive_telegram_webhook(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "invalid_webhook_signature", "message": "The webhook signature is invalid."},
         )
+    await asyncio.to_thread(_mark_telegram_connected, client, channel_id)
     duplicate = await asyncio.to_thread(
         _persist_event,
         client,

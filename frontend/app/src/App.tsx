@@ -33,6 +33,18 @@ import {
   X,
   type Icon,
 } from '@phosphor-icons/react'
+import { AgGridReact } from 'ag-grid-react'
+import {
+  ClientSideRowModelModule,
+  ModuleRegistry,
+  NumberFilterModule,
+  PaginationModule,
+  TextFilterModule,
+  themeQuartz,
+  type ColDef,
+  type ICellRendererParams,
+  type ValueFormatterParams,
+} from 'ag-grid-community'
 import {
   Badge,
   Button,
@@ -59,6 +71,29 @@ import {
   type WebsiteChatInstall,
 } from './api'
 import { getSupabaseClient, isSupabaseConfigured } from './supabase'
+
+ModuleRegistry.registerModules([
+  ClientSideRowModelModule,
+  NumberFilterModule,
+  PaginationModule,
+  TextFilterModule,
+])
+
+const reactantGridTheme = themeQuartz.withParams({
+  accentColor: '#398158',
+  backgroundColor: '#ffffff',
+  borderColor: '#e7ece8',
+  browserColorScheme: 'light',
+  fontFamily: 'DM Sans, sans-serif',
+  fontSize: 12,
+  foregroundColor: '#445148',
+  headerBackgroundColor: '#fafbfa',
+  headerFontSize: 11,
+  headerFontWeight: 600,
+  headerTextColor: '#758078',
+  rowHoverColor: '#f6faf6',
+  spacing: 8,
+})
 
 type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings'
 type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal' | 'Website chat' | 'Walrus Memory'
@@ -87,6 +122,14 @@ function ownerMessageContent(text: string) {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   return { cleanText, imageUrl }
+}
+
+function integrationIsConnected(integration: Integration) {
+  return Boolean(
+    integration.status === 'connected'
+    || integration.connected_at
+    || integration.last_success_at,
+  )
 }
 
 type Order = {
@@ -1327,6 +1370,79 @@ function Catalog({
       || (visibility === 'hidden' && !product.agentCanShare)
     return matchesSearch && matchesVisibility
   })
+  const productColumns: ColDef<CatalogProduct>[] = [
+    {
+      field: 'name',
+      headerName: 'Product',
+      flex: 1.6,
+      minWidth: 210,
+      cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
+        <span className="catalog-grid-product">
+          {data.images[0]
+            ? <img src={data.images[0]} alt="" loading="lazy" />
+            : <span className="catalog-grid-image-placeholder"><ImageSquare size={18} /></span>}
+          <span><strong>{data.name}</strong><small>{data.description || 'No description'}</small></span>
+        </span>
+      ) : null,
+    },
+    {
+      field: 'category',
+      minWidth: 120,
+      flex: 0.8,
+      valueFormatter: ({ value }: ValueFormatterParams<CatalogProduct, string>) => value || '—',
+    },
+    {
+      field: 'price',
+      minWidth: 110,
+      valueFormatter: ({ data }: ValueFormatterParams<CatalogProduct, number>) => data ? formatCurrency(data.price, data.currency) : '',
+    },
+    {
+      field: 'stock',
+      headerName: 'Stock',
+      minWidth: 105,
+      valueFormatter: ({ value }: ValueFormatterParams<CatalogProduct, number | null>) => value === null ? 'Not tracked' : `${value} in stock`,
+    },
+    {
+      field: 'agentCanShare',
+      headerName: 'Agent access',
+      minWidth: 140,
+      cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
+        <button
+          className={`catalog-agent-access ${data.agentCanShare ? 'catalog-agent-enabled' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            void toggleAgentAccess(data)
+          }}
+          aria-pressed={data.agentCanShare}
+        >
+          <Robot size={14} /> {data.agentCanShare ? 'Can share' : 'Hidden'}
+        </button>
+      ) : null,
+    },
+    {
+      colId: 'actions',
+      headerName: 'Actions',
+      sortable: false,
+      filter: false,
+      minWidth: 158,
+      cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
+        <span className="catalog-grid-actions">
+          <Button size="1" variant="soft" color="gray" onClick={(event) => {
+            event.stopPropagation()
+            openProductForm(data)
+          }}>Edit</Button>
+          <button
+            className="catalog-remove-button"
+            onClick={(event) => {
+              event.stopPropagation()
+              setProductToRemove(data)
+            }}
+            aria-label={`Remove ${data.name}`}
+          ><Trash size={16} /></button>
+        </span>
+      ) : null,
+    },
+  ]
 
   return (
     <div className="page-body catalog-page">
@@ -1377,44 +1493,19 @@ function Catalog({
           <Button variant="soft" color="gray" onClick={() => { setSearch(''); setVisibility('all') }}>Clear filters</Button>
         </section>
       ) : (
-        <div className="catalog-grid">
-          {visibleProducts.map((product) => (
-            <article className={`catalog-product panel ${!product.available ? 'catalog-product-unavailable' : ''}`} key={product.id}>
-              <div className="catalog-product-image-wrap">
-                {product.images[0]
-                  ? <img src={product.images[0]} alt={product.name} />
-                  : <div className="catalog-image-placeholder" aria-label="Product image unavailable"><ImageSquare size={28} /></div>}
-                {product.images.length > 1 && <span className="catalog-image-count"><ImageSquare size={13} /> {product.images.length} photos</span>}
-                {!product.available && <span className="catalog-product-state">Out of stock</span>}
-              </div>
-              <div className="catalog-product-details">
-                <div className="catalog-product-title-row">
-                  <div>
-                    <h2>{product.name}</h2>
-                    <div className="catalog-product-labels">
-                      {product.category && <span className="catalog-category">{product.category}</span>}
-                    </div>
-                  </div>
-                  <strong className="catalog-price">{formatCurrency(product.price, product.currency)}</strong>
-                </div>
-                {product.description && <p className="catalog-product-description">{product.description}</p>}
-                <div className="catalog-product-meta">
-                  <span>{product.stock === null ? 'Stock not tracked' : `${product.stock} in stock`}</span>
-                  <button
-                    className={`catalog-agent-access ${product.agentCanShare ? 'catalog-agent-enabled' : ''}`}
-                    onClick={() => { void toggleAgentAccess(product) }}
-                    aria-pressed={product.agentCanShare}
-                  >
-                    <Robot size={14} /> {product.agentCanShare ? 'Agent can share' : 'Hidden from agent'}
-                  </button>
-                </div>
-                <div className="catalog-product-actions">
-                  <Button variant="soft" color="gray" onClick={() => openProductForm(product)}>Edit product</Button>
-                  <button className="catalog-remove-button" onClick={() => setProductToRemove(product)} aria-label={`Remove ${product.name}`}><Trash size={16} /></button>
-                </div>
-              </div>
-            </article>
-          ))}
+        <div className="reactant-data-grid catalog-data-grid ag-theme-quartz" aria-label="Product catalog">
+          <AgGridReact<CatalogProduct>
+            theme={reactantGridTheme}
+            rowData={visibleProducts}
+            columnDefs={productColumns}
+            defaultColDef={{ sortable: true, resizable: true, filter: true }}
+            getRowId={({ data }) => data.id}
+            rowHeight={68}
+            pagination
+            paginationPageSize={20}
+            paginationPageSizeSelector={[20, 50, 100]}
+            overlayNoRowsTemplate="No products match your filters."
+          />
         </div>
       )}
 
@@ -1558,6 +1649,30 @@ function Inbox({
     { label: 'Open', count: allConversations.filter((conversation) => conversation.status === 'Open').length },
     { label: 'Resolved', count: allConversations.filter((conversation) => conversation.status === 'Resolved').length },
   ] as const
+  const conversationColumns = useMemo<ColDef<Conversation>[]>(() => [
+    {
+      field: 'name',
+      headerName: 'Customer',
+      flex: 1,
+      minWidth: 165,
+      cellRenderer: ({ data }: ICellRendererParams<Conversation>) => data ? (
+        <span className="inbox-grid-customer">
+          <Avatar initials={data.initials} color={data.color} small />
+          <span><strong>{data.name}{data.unread && <i aria-label="Unread" />}</strong><small>{data.preview}</small></span>
+        </span>
+      ) : null,
+    },
+    { field: 'channel', minWidth: 95, maxWidth: 125 },
+    { field: 'time', headerName: 'Last message', minWidth: 88, maxWidth: 112 },
+    {
+      field: 'status',
+      minWidth: 110,
+      maxWidth: 135,
+      cellRenderer: ({ value }: ICellRendererParams<Conversation, ConversationStatus>) => value === 'Needs reply'
+        ? <span className="needs-reply-label">Needs reply</span>
+        : value,
+    },
+  ], [])
 
   return (
     <div className="page-body inbox-page">
@@ -1577,19 +1692,25 @@ function Inbox({
               </button>
             ))}
           </div>
-          <div className="inbox-conversation-list">
-            {conversations.length === 0 && <div className="empty-list">{allConversations.length === 0 ? 'Conversations will appear here when customers contact your connected channels.' : 'No conversations match this filter.'}</div>}
-            {conversations.map((conversation) => (
-              <button className={`inbox-conversation ${selectedConversation?.id === conversation.id ? 'inbox-conversation-selected' : ''}`} key={conversation.id} onClick={() => setSelected(conversation.id)}>
-                <Avatar initials={conversation.initials} color={conversation.color} />
-                <span className="inbox-conversation-info">
-                  <span className="inbox-conversation-name"><strong>{conversation.name}</strong><small>{conversation.time}</small></span>
-                  <span className="inbox-conversation-preview">{conversation.preview}</span>
-                  <span className="inbox-conversation-tags"><span className="channel-tag"><ChatCircleDots size={12} /> {conversation.channel}</span>{conversation.status === 'Needs reply' && <span className="needs-reply-label">Needs reply</span>}</span>
-                </span>
-                {conversation.unread && <span className="unread-indicator" aria-label="Unread" />}
-              </button>
-            ))}
+          <div className="reactant-data-grid inbox-data-grid ag-theme-quartz" aria-label="Customer conversations">
+            <AgGridReact<Conversation>
+              theme={reactantGridTheme}
+              rowData={conversations}
+              columnDefs={conversationColumns}
+              defaultColDef={{ sortable: true, resizable: true, filter: true }}
+              getRowId={({ data }) => data.id}
+              rowHeight={68}
+              getRowClass={({ data }) => data?.id === selectedConversation?.id ? 'inbox-grid-row-selected' : undefined}
+              onRowClicked={({ data }) => { if (data) setSelected(data.id) }}
+              onCellKeyDown={({ event, data }) => {
+                if (event instanceof KeyboardEvent && (event.key === 'Enter' || event.key === ' ')) {
+                  if (data) setSelected(data.id)
+                }
+              }}
+              overlayNoRowsTemplate={allConversations.length === 0
+                ? 'Conversations will appear here when customers contact your connected channels.'
+                : 'No conversations match this filter.'}
+            />
           </div>
         </section>
 
@@ -1652,6 +1773,47 @@ function Orders({
   setSearch: (value: string) => void
   selectOrder: (id: string | null) => void
 }) {
+  const orderColumns = useMemo<ColDef<Order>[]>(() => [
+    { field: 'id', headerName: 'Order', minWidth: 125, cellClass: 'order-id-cell' },
+    {
+      field: 'customer',
+      minWidth: 170,
+      flex: 1,
+      cellRenderer: ({ data }: ICellRendererParams<Order>) => data ? (
+        <span className="table-customer"><Avatar initials={data.initials} color={colorForInitials(data.initials)} small />{data.customer}</span>
+      ) : null,
+    },
+    { field: 'item', headerName: 'Items', minWidth: 155, flex: 1, cellClass: 'table-item-cell' },
+    { field: 'date', minWidth: 115, cellClass: 'muted-cell' },
+    {
+      field: 'total',
+      minWidth: 115,
+      cellClass: 'total-cell',
+      valueFormatter: ({ data }: ValueFormatterParams<Order, number>) => data ? formatCurrency(data.total, data.currency) : '',
+    },
+    {
+      field: 'status',
+      minWidth: 145,
+      cellRenderer: ({ value }: ICellRendererParams<Order, Order['status']>) => value ? <OrderStatus status={value} /> : null,
+    },
+    {
+      colId: 'actions',
+      headerName: '',
+      sortable: false,
+      filter: false,
+      width: 58,
+      cellRenderer: ({ data }: ICellRendererParams<Order>) => data ? (
+        <button
+          className="icon-button row-more"
+          aria-label={`More actions for ${data.id}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            selectOrder(data.id)
+          }}
+        ><DotsThree size={20} /></button>
+      ) : null,
+    },
+  ], [selectOrder])
   return (
     <div className="page-body orders-page">
       <PageHeading title="Orders" description="Track orders and payment status in one place." />
@@ -1664,24 +1826,23 @@ function Orders({
             <TextField.Root placeholder="Search orders" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search orders"><TextField.Slot><MagnifyingGlass size={15} /></TextField.Slot></TextField.Root>
           </div>
         </div>
-        <div className="orders-table-scroll">
-          <table className="orders-table">
-            <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Date</th><th>Total</th><th>Status</th><th aria-label="Actions" /></tr></thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} className={selectedOrder?.id === order.id ? 'selected-order-row' : ''} onClick={() => selectOrder(order.id)}>
-                  <td><button className="order-id-link" onClick={(event) => { event.stopPropagation(); selectOrder(order.id) }}>{order.id}</button></td>
-                  <td><span className="table-customer"><Avatar initials={order.initials} color={colorForInitials(order.initials)} small />{order.customer}</span></td>
-                  <td className="table-item-cell">{order.item}</td>
-                  <td className="muted-cell">{order.date}</td>
-                  <td className="total-cell">{formatCurrency(order.total, order.currency)}</td>
-                  <td><OrderStatus status={order.status} /></td>
-                  <td><button className="icon-button row-more" aria-label={`More actions for ${order.id}`} onClick={(event) => { event.stopPropagation(); selectOrder(order.id) }}><DotsThree size={20} /></button></td>
-                </tr>
-              ))}
-              {orders.length === 0 && <tr><td className="table-empty-cell" colSpan={7}>No orders found. Try another filter or search.</td></tr>}
-            </tbody>
-          </table>
+        <div className="reactant-data-grid orders-data-grid ag-theme-quartz" aria-label="Orders">
+          <AgGridReact<Order>
+            theme={reactantGridTheme}
+            rowData={orders}
+            columnDefs={orderColumns}
+            defaultColDef={{ sortable: true, resizable: true, filter: true }}
+            getRowId={({ data }) => data.id}
+            rowHeight={57}
+            getRowClass={({ data }) => data?.id === selectedOrder?.id ? 'selected-order-row' : undefined}
+            onRowClicked={({ data }) => selectOrder(data?.id ?? null)}
+            onCellKeyDown={({ event, data }) => {
+              if (event instanceof KeyboardEvent && (event.key === 'Enter' || event.key === ' ')) {
+                if (data) selectOrder(data.id)
+              }
+            }}
+            overlayNoRowsTemplate="No orders found. Try another filter or search."
+          />
         </div>
         <div className="table-pagination"><span>{orders.length} orders loaded</span></div>
       </section>
@@ -1759,6 +1920,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [telegramSetup, setTelegramSetup] = useState<TelegramSetup | null>(null)
+  const [telegramSetupFor, setTelegramSetupFor] = useState<string | null>(null)
   const [websiteInstall, setWebsiteInstall] = useState<WebsiteChatInstall | null>(null)
   const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
     { provider: 'WooCommerce', key: 'woocommerce', description: 'Sync products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
@@ -1900,6 +2062,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           businessPath(businessId, `/integrations/${integration.id}/telegram-setup`),
         )
         setTelegramSetup(setup)
+        setTelegramSetupFor(integration.id)
         notify(`Telegram connected to @${setup.bot_username}.`)
         return
       }
@@ -1932,6 +2095,10 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     try {
       await apiRequest(businessPath(businessId, `/integrations/${integration.id}`), { method: 'DELETE' })
       setIntegrations((items) => items.filter((item) => item.id !== integration.id))
+      if (telegramSetupFor === integration.id) {
+        setTelegramSetup(null)
+        setTelegramSetupFor(null)
+      }
       if (integration.provider === 'website_chat' && websiteInstall) setWebsiteInstall(null)
       notify(`${integration.provider} was disconnected.`)
     } catch (reason) {
@@ -1948,18 +2115,15 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       <div className="integration-grid">
         {providers.map((provider) => {
           const IconComponent = provider.icon
-          const connection = integrations.find((item) => item.provider === provider.key && item.status !== 'disconnected')
-          const connected = Boolean(connection && (
-            connection.status === 'connected'
-            || connection.connected_at
-            || connection.last_success_at
-          ))
+          const providerConnections = integrations.filter((item) => item.provider === provider.key && item.status !== 'disconnected')
+          const connection = providerConnections.find(integrationIsConnected) ?? providerConnections[0]
+          const connected = connection ? integrationIsConnected(connection) : false
           return (
             <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={provider.key}>
               <div className="integration-card-top"><span className={`integration-icon integration-icon-${provider.provider.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{provider.category}</Badge></div>
               <h2>{provider.provider}</h2>
               <p>{provider.description}</p>
-              {provider.key === 'telegram' && telegramSetup && connection?.id === integrations.find((item) => item.provider === 'telegram')?.id && (
+              {provider.key === 'telegram' && telegramSetup && connection?.id === telegramSetupFor && (
                 <div className="integration-setup-details">
                   <strong>Telegram webhook ready</strong>
                   <small>Bot: @{telegramSetup.bot_username || telegramSetup.bot_name}</small>
@@ -2019,6 +2183,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                         {!connected && connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
                       </div>
                       <div className="integration-card-actions-buttons">
+                        {provider.key === 'telegram' && !connected && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Verify connection</Button>}
                         {provider.key !== 'telegram' && provider.key !== 'shopify' && provider.key !== 'website_chat' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
                         {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
                         {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>}

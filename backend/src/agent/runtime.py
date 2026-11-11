@@ -30,6 +30,17 @@ MAX_AGENT_TOTAL_TOKENS = 8000
 MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_PRODUCT_IMAGE_RESULTS = 3
+PRODUCT_IMAGE_REQUEST = re.compile(
+    r"\b(image|images|photo|photos|picture|pictures|show me|send me|see it)\b",
+    re.I,
+)
+PRODUCT_IMAGE_QUERY_STOP_WORDS = {
+    "a", "an", "and", "can", "could", "do", "for", "get", "guys", "have",
+    "i", "image", "images", "it", "me", "message", "my", "of", "please",
+    "picture", "pictures", "photo", "photos", "see", "show", "some", "the",
+    "this", "that", "to", "want", "you", "one", "product", "products", "item",
+    "items", "available",
+}
 
 
 def sanitize_customer_response(text: str) -> str:
@@ -73,6 +84,72 @@ def _product_image_urls(
     return list(dict.fromkeys(urls))[:MAX_PRODUCT_IMAGE_RESULTS]
 
 
+def product_image_query(text: str, history: list[dict[str, Any]]) -> str:
+    def clean(value: str) -> str:
+        words = re.findall(r"[\w'-]+", value.lower())
+        return " ".join(
+            word for word in words if word not in PRODUCT_IMAGE_QUERY_STOP_WORDS
+        )[:100]
+
+    query = clean(PRODUCT_IMAGE_REQUEST.sub(" ", text))
+    if query:
+        return query
+    for row in history:
+        if row.get("sender_type") == "customer":
+            query = clean(str(row.get("text", "")))
+            if query:
+                return query
+    return ""
+
+
+def product_image_attachments(
+    products: list[dict[str, Any]],
+    response: str,
+    *,
+    explicitly_requested: bool,
+) -> list[dict[str, str]]:
+    attachments: list[dict[str, str]] = []
+    for product in products:
+        name = product.get("name")
+        if not isinstance(name, str) or (
+            not explicitly_requested and name.casefold() not in response.casefold()
+        ):
+            continue
+        image_urls = product.get("image_urls")
+        if not isinstance(image_urls, list):
+            continue
+        for url in image_urls:
+            if isinstance(url, str) and url.startswith("https://"):
+                attachments.append({"type": "image", "url": url, "alt": name})
+                if len(attachments) >= MAX_PRODUCT_IMAGE_RESULTS:
+                    return attachments
+    return attachments
+
+
+def product_image_reply(
+    response: str,
+    attachments: list[dict[str, str]],
+    *,
+    explicitly_requested: bool,
+    delivery_failed: bool = False,
+) -> str:
+    if explicitly_requested:
+        if not attachments:
+            if delivery_failed:
+                return "I couldn't send the product photo just now. Please try again later."
+            return "I couldn't find a shareable photo for that product. Which item did you mean?"
+        names = list(dict.fromkeys(item["alt"] for item in attachments))
+        if len(names) == 1:
+            return f"Here is a photo of {names[0]}."
+        return f"Here are photos of {', '.join(names)}."
+    if attachments:
+        names = list(dict.fromkeys(item["alt"] for item in attachments))
+        return f"{response.rstrip()}\n\nI've also included a photo of {', '.join(names)}."
+    if delivery_failed:
+        return f"{response.rstrip()}\n\nI couldn't send the product photo just now."
+    return response
+
+
 def find_business_products(
     client: Client,
     business_id: str,
@@ -89,15 +166,30 @@ def find_business_products(
         .replace("_", "\\_")
     )
     bounded_limit = max(1, min(limit, MAX_PRODUCT_SEARCH_RESULTS))
-    rows = execute(
-        client.table("products")
-        .select("id,name,description,price_minor,currency,stock_quantity,provider_data,image_asset_ids")
-        .eq("business_id", business_id)
-        .eq("status", "active")
-        .eq("agent_enabled", True)
-        .ilike("name", f"%{escaped_query}%")
-        .limit(bounded_limit)
-    )
+    fields = "id,name,description,price_minor,currency,stock_quantity,provider_data,image_asset_ids"
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    search_terms = [escaped_query]
+    seen_terms = {escaped_query.lower()}
+    for term in re.findall(r"[\w'-]+", normalized_query):
+        escaped_term = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if len(term) > 1 and escaped_term.lower() not in seen_terms:
+            search_terms.append(escaped_term)
+            seen_terms.add(escaped_term.lower())
+    for term in search_terms:
+        rows = execute(
+            client.table("products")
+            .select(fields)
+            .eq("business_id", business_id)
+            .eq("status", "active")
+            .eq("agent_enabled", True)
+            .ilike("name", f"%{term}%")
+            .limit(bounded_limit)
+        )
+        for row in rows:
+            rows_by_id.setdefault(str(row["id"]), row)
+        if rows or len(rows_by_id) >= bounded_limit:
+            break
+    rows = list(rows_by_id.values())[:bounded_limit]
     return [
         {
             "product_id": row["id"],
@@ -165,13 +257,23 @@ def build_business_agent(
     customer_reference: str = "",
     idempotency_key: str | None = None,
     created_checkout_urls: list[str] | None = None,
+    selected_product_images: list[dict[str, Any]] | None = None,
     vision_enabled: bool = False,
 ) -> Agent:
     @tool
     def search_business_products(query: str, limit: int = 5) -> list[dict[str, Any]]:
-        """Find active products in this business's catalog by product name."""
+        """Find active catalog products by name. When customer-facing product photos are available, the channel can send them with the reply; never claim a photo was sent unless the channel confirms delivery."""
         products = find_business_products(client, business_id, query, limit)
         if audience == "customer":
+            if selected_product_images is not None:
+                selected_product_images[:] = [
+                    {
+                        "name": product["name"],
+                        "image_urls": product.get("image_urls", []),
+                    }
+                    for product in products
+                    if product.get("image_urls")
+                ]
             return [
                 {
                     **product,

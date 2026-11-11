@@ -1060,6 +1060,156 @@
   overflow: auto;
 }
 
+.inbox-data-grid {
+  min-height: 0;
+  flex: 1;
+}
+
+.inbox-data-grid .ag-row {
+  cursor: pointer;
+}
+
+.inbox-grid-row-selected {
+  background: #f1f7f2 !important;
+}
+
+.inbox-grid-customer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.inbox-grid-customer > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.inbox-grid-customer strong,
+.inbox-grid-customer small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-grid-customer strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #303c34;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.inbox-grid-customer small {
+  color: #7c877f;
+  font-size: 9px;
+}
+
+.inbox-grid-customer i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #398158;
+}
+
+.reactant-data-grid {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  --ag-wrapper-border: none;
+}
+
+.orders-data-grid {
+  height: min(64vh, 640px);
+  min-height: 340px;
+}
+
+.orders-data-grid .ag-row {
+  cursor: pointer;
+}
+
+.orders-data-grid .ag-cell.order-id-cell {
+  color: #31734d;
+  font-weight: 650;
+}
+
+.orders-data-grid .ag-cell.table-item-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.orders-data-grid .ag-cell.muted-cell {
+  color: #849087;
+  font-size: 10px;
+}
+
+.orders-data-grid .ag-cell.total-cell {
+  color: #3f4e44;
+  font-weight: 620;
+}
+
+.catalog-data-grid {
+  height: min(68vh, 720px);
+  min-height: 420px;
+}
+
+.catalog-grid-product {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.catalog-grid-product img,
+.catalog-grid-image-placeholder {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  color: #78877c;
+  background: #f0f3f0;
+  object-fit: cover;
+}
+
+.catalog-grid-product > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.catalog-grid-product strong,
+.catalog-grid-product small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-grid-product strong {
+  color: #303c34;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.catalog-grid-product small {
+  color: #7c877f;
+  font-size: 9px;
+}
+
+.catalog-grid-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.catalog-grid-actions .catalog-remove-button {
+  margin-left: 0;
+}
+
 .inbox-conversation {
   position: relative;
   display: flex;

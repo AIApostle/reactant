@@ -24,7 +24,14 @@ from src.agent.customer_images import (
     signed_customer_attachments,
     store_customer_images,
 )
-from src.agent.runtime import build_business_agent, find_business_products, invoke_business_agent
+from src.agent.runtime import (
+    build_business_agent,
+    find_business_products,
+    invoke_business_agent,
+    product_image_attachments,
+    product_image_query,
+    product_image_reply,
+)
 from src.supabase.client import get_service_supabase_client, get_supabase_settings
 from src.supabase.repository import execute
 
@@ -33,12 +40,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 IMAGE_REQUEST = re.compile(r"\b(image|images|photo|photos|picture|pictures|show me|send me|see it)\b", re.I)
-IMAGE_QUERY_STOP_WORDS = {
-    "a", "an", "and", "can", "could", "do", "for", "get", "i", "image",
-    "images", "it", "me", "of", "please", "picture", "pictures", "photo",
-    "photos", "see", "show", "some", "the", "this", "that", "to", "want",
-    "you", "one", "product", "products", "item", "items",
-}
 
 
 class WidgetSessionCreate(BaseModel):
@@ -199,19 +200,7 @@ def _agent_settings(client: Client, business_id: str) -> tuple[dict[str, Any], d
 
 
 def _image_query(text: str, history: list[dict[str, Any]]) -> str:
-    def clean(value: str) -> str:
-        words = re.findall(r"[\w'-]+", value.lower())
-        return " ".join(word for word in words if word not in IMAGE_QUERY_STOP_WORDS)[:100]
-
-    query = clean(IMAGE_REQUEST.sub(" ", text))
-    if query:
-        return query
-    for row in history:
-        if row.get("sender_type") == "customer":
-            query = clean(str(row.get("text", "")))
-            if query:
-                return query
-    return ""
+    return product_image_query(text, history)
 
 
 def _process_widget_message(
@@ -258,6 +247,7 @@ def _process_widget_message(
             text="I couldn't respond just now. Please try again later.",
         )
         return
+    selected_product_images: list[dict[str, Any]] = []
     agent = build_business_agent(
         client=client,
         business_id=business_id,
@@ -278,6 +268,7 @@ def _process_widget_message(
         customer_reference=str(claims["visitor_id"]),
         idempotency_key=f"website:{message_id}",
         created_checkout_urls=[],
+        selected_product_images=selected_product_images,
         vision_enabled=bool(images),
     )
     response_text = invoke_business_agent(
@@ -286,17 +277,24 @@ def _process_widget_message(
         audience="customer",
         images=images,
     )
-    attachments: list[dict[str, str]] = []
-    if IMAGE_REQUEST.search(user_text):
+    explicitly_requested = bool(IMAGE_REQUEST.search(user_text))
+    image_products = selected_product_images
+    if explicitly_requested:
         query = _image_query(user_text, history_rows)
         if query:
-            for product in find_business_products(client, business_id, query, limit=3):
-                for url in product.get("image_urls", [])[:2]:
-                    attachments.append(
-                        {"type": "image", "url": url, "alt": product["name"]}
-                    )
-        if attachments and re.search(r"\b(can't|cannot|don't have|unavailable|no access)\b.*\b(image|photo|picture)s?\b", response_text, re.I):
-            response_text = "Here are the product photos."
+            matching_products = find_business_products(client, business_id, query, limit=3)
+            if matching_products:
+                image_products = matching_products
+    attachments = product_image_attachments(
+        image_products,
+        response_text,
+        explicitly_requested=explicitly_requested,
+    )
+    response_text = product_image_reply(
+        response_text,
+        attachments,
+        explicitly_requested=explicitly_requested,
+    )
 
     _save_widget_agent_message(
         client,

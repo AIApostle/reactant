@@ -10,7 +10,13 @@ from strands.models.openai import OpenAIModel
 
 from src.agent import worker as agent_worker
 from src.agent.config import AgentRuntimeSettings
-from src.agent.runtime import build_business_agent, find_business_products
+from src.agent.runtime import (
+    build_business_agent,
+    find_business_products,
+    product_image_attachments,
+    product_image_query,
+    product_image_reply,
+)
 from src.agent.prompts import build_business_system_prompt
 from src.owner_assistant import routes as owner_assistant_routes
 from src.catalog.routes import PRODUCT_FIELDS
@@ -190,6 +196,13 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("null stock quantity means stock is not tracked", prompt)
         self.assertIn("cannot mutate business data", prompt)
         self.assertIn("require_approval_for_checkout", prompt)
+        customer_prompt = build_business_system_prompt(
+            business={"name": "Store"},
+            agent_config=None,
+            audience="customer",
+        )
+        self.assertIn("matching catalog images automatically when available", customer_prompt)
+        self.assertIn("even when the customer did not explicitly", customer_prompt)
 
     def test_agent_has_only_the_scoped_catalog_tool(self) -> None:
         agent = build_business_agent(
@@ -204,6 +217,31 @@ class AgentRuntimeTests(unittest.TestCase):
             sorted(agent.tool_registry.registry.keys()),
             ["search_business_products", "search_public_web"],
         )
+
+    def test_product_image_query_uses_recent_product_when_customer_is_vague(self) -> None:
+        query = product_image_query(
+            "Can I see a picture of the product you guys have (my message)?",
+            [
+                {"sender_type": "customer", "text": "Do you have shoes?"},
+                {"sender_type": "agent", "text": "We have Shoes in the catalog."},
+            ],
+        )
+        self.assertEqual(query, "shoes")
+
+    def test_product_image_delivery_is_confirmed_only_after_attachment_exists(self) -> None:
+        product = {
+            "name": "Canvas bag",
+            "image_urls": ["https://storage.example/photo.png"],
+        }
+        attachments = product_image_attachments(
+            [product],
+            "The Canvas bag is a good choice.",
+            explicitly_requested=False,
+        )
+        self.assertEqual(attachments[0]["alt"], "Canvas bag")
+        self.assertIn("included a photo", product_image_reply("Recommended.", attachments, explicitly_requested=False))
+        self.assertIn("couldn't send", product_image_reply("Recommended.", [], explicitly_requested=True, delivery_failed=True))
+        self.assertIn("couldn't find", product_image_reply("Recommended.", [], explicitly_requested=True))
 
     def test_agent_uses_openrouter_free_model_with_configured_api_key(self) -> None:
         settings = AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key"))
