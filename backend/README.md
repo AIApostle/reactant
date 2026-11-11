@@ -62,7 +62,7 @@ Additional configuration:
 - `PUBLIC_FRONTEND_URL` — HTTPS frontend origin used for customer checkout and
   for hosting the `reactant-chat.js` website widget installer.
 - `AGENTCARD_ENABLED` — deployment-wide opt-in for agent-originated checkout;
-  defaults to `false`.
+  defaults to `false`; both `true` and `True` are accepted.
 - `PAYPAL_RECEIVING_COUNTRIES` — comma-separated business country allowlist;
   defaults to `US`.
 - `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are legacy backend settings and

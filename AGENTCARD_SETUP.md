@@ -67,8 +67,9 @@ checkout itself uses public, token-scoped API routes.
 
 `PAYPAL_RECEIVING_COUNTRIES` is a comma-separated country allowlist. The
 business profile country must be included; Nigeria (`NG`) is explicitly
-blocked by the current eligibility check. Keep `AGENTCARD_ENABLED=false`
-until the Sandbox test succeeds.
+blocked by the current eligibility check. Set `AGENTCARD_ENABLED=true` or
+`AGENTCARD_ENABLED=True` in Render to enable AgentCard; both spellings are
+accepted. Keep it disabled until the Sandbox test succeeds.
 
 ### Vercel frontend environment
 

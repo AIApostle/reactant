@@ -197,9 +197,10 @@ The backend uses only the connected business's encrypted PayPal credentials;
 it never falls back to the deployment's global PayPal credentials. Connect the
 Sandbox app through the Integrations page and use its Test action before
 enabling AgentCard. The merchant must be in a configured receiving country.
-AgentCard is disabled until `AGENTCARD_ENABLED=true`; `PAYPAL_RECEIVING_COUNTRIES`
-defaults to `US`. Do not enable live payments until PayPal has confirmed your
-merchant eligibility and any required platform/partner approval.
+AgentCard is disabled until `AGENTCARD_ENABLED=true` (either `true` or `True`
+is accepted); `PAYPAL_RECEIVING_COUNTRIES` defaults to `US`. Do not enable live
+payments until PayPal has confirmed your merchant eligibility and any required
+platform/partner approval.
 
 Enable the agent's order and PayPal checkout permissions for the test
 workspace. The agent can only submit catalog product IDs and quantities; the

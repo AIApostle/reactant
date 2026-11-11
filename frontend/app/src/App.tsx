@@ -2720,6 +2720,7 @@ type OwnerTelegramPairing = {
 
 function OwnerTelegramChannel({ businessId }: { businessId: string }) {
   const [status, setStatus] = useState<OwnerTelegramStatus | null>(null)
+  const [statusLoading, setStatusLoading] = useState(true)
   const [pairing, setPairing] = useState<OwnerTelegramPairing | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -2727,6 +2728,7 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
   const [disconnectOpen, setDisconnectOpen] = useState(false)
 
   const loadStatus = useCallback(async () => {
+    setStatusLoading(true)
     try {
       const current = await apiRequest<OwnerTelegramStatus>(businessPath(businessId, '/owner-assistant/telegram'))
       setStatus(current)
@@ -2734,6 +2736,8 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
       if (current.paired) setPairing(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The Telegram owner channel could not be loaded.')
+    } finally {
+      setStatusLoading(false)
     }
   }, [businessId])
 
@@ -2748,6 +2752,9 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
       })
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : 'The Telegram owner channel could not be loaded.')
+      })
+      .finally(() => {
+        if (active) setStatusLoading(false)
       })
     return () => { active = false }
   }, [businessId])
@@ -2818,8 +2825,15 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
           </p>
         </div>
       </div>
-      {!status ? (
+      {!status && statusLoading ? (
         <span className="owner-telegram-status">Loading channel status...</span>
+      ) : !status ? (
+        <div className="owner-telegram-actions">
+          <span className="owner-telegram-status">Channel status could not be loaded.</span>
+          <Button variant="soft" color="gray" disabled={statusLoading} onClick={() => void loadStatus()}>
+            {statusLoading ? 'Retrying...' : 'Retry'}
+          </Button>
+        </div>
       ) : !status.telegram_connected ? (
         <span className="owner-telegram-status">Connect Telegram in Integrations first.</span>
       ) : status.paired ? (
