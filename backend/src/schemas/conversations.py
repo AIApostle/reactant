@@ -26,6 +26,12 @@ class ConversationLastMessage(RequestModel):
     created_at: datetime
 
 
+class CustomerMessageAttachment(RequestModel):
+    type: Literal["image"]
+    url: str = Field(min_length=1, max_length=4096)
+    alt: str = Field(default="Product image", max_length=500)
+
+
 class ConversationResponse(RequestModel):
     id: UUID
     business_id: UUID
@@ -49,3 +55,4 @@ class CustomerMessageResponse(RequestModel):
     visibility: Literal["customer", "staff"]
     delivery_status: Literal["queued", "sent", "failed"]
     created_at: datetime
+    attachments: list[CustomerMessageAttachment] = Field(default_factory=list)

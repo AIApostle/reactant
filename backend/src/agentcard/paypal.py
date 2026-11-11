@@ -1,0 +1,394 @@
+import json
+from decimal import Decimal
+from typing import Any
+from urllib.parse import urlparse
+from uuid import UUID
+
+import httpx
+from cryptography.fernet import Fernet, InvalidToken
+from fastapi import HTTPException, status
+from supabase import Client
+
+from src.supabase.client import get_supabase_settings
+from src.supabase.repository import execute
+
+
+class PayPalError(RuntimeError):
+    pass
+
+
+def _paypal_api_base() -> str:
+    base_url = get_supabase_settings().paypal_api_base_url.rstrip("/")
+    if base_url not in {
+        "https://api-m.sandbox.paypal.com",
+        "https://api-m.paypal.com",
+    }:
+        raise PayPalError("PayPal API endpoint is not supported.")
+    return base_url
+
+
+def paypal_credentials(
+    client: Client,
+    business_id: str,
+    integration_id: str,
+) -> dict[str, str]:
+    integration = execute(
+        client.table("integrations")
+        .select("id,credentials_ciphertext,status")
+        .eq("business_id", business_id)
+        .eq("id", integration_id)
+        .eq("provider", "paypal")
+        .eq("category", "payments")
+        .maybe_single()
+    )
+    if not integration or integration["status"] != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_merchant_unavailable",
+                "message": "The business PayPal integration is not ready.",
+            },
+        )
+    encryption_key = get_supabase_settings().credentials_encryption_key
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "credential_encryption_unavailable",
+                "message": "PayPal is not configured securely.",
+            },
+        )
+    try:
+        decrypted = Fernet(encryption_key.get_secret_value().encode()).decrypt(
+            integration["credentials_ciphertext"].encode()
+        )
+        credentials = json.loads(decrypted)
+    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_merchant_unavailable",
+                "message": "The business PayPal integration could not be read.",
+            },
+        ) from error
+    if (
+        not isinstance(credentials, dict)
+        or not isinstance(credentials.get("consumer_key"), str)
+        or not isinstance(credentials.get("consumer_secret"), str)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_merchant_unavailable",
+                "message": "The business PayPal integration is incomplete.",
+            },
+        )
+    return {
+        "client_id": credentials["consumer_key"],
+        "client_secret": credentials["consumer_secret"],
+        **(
+            {"webhook_id": credentials["webhook_id"]}
+            if isinstance(credentials.get("webhook_id"), str)
+            else {}
+        ),
+    }
+
+
+def _request_json(
+    method: str,
+    url: str,
+    *,
+    client_id: str,
+    client_secret: str,
+    payload: dict[str, Any] | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    if request_id:
+        headers["PayPal-Request-Id"] = request_id
+    try:
+        with httpx.Client(timeout=15, follow_redirects=False) as http:
+            response = http.request(
+                method,
+                url,
+                auth=(client_id, client_secret)
+                if url.endswith("/v1/oauth2/token")
+                else None,
+                headers=headers,
+                data={"grant_type": "client_credentials"}
+                if url.endswith("/v1/oauth2/token")
+                else None,
+                json=payload,
+            )
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise PayPalError("PayPal could not complete the request.") from error
+    if not isinstance(result, dict):
+        raise PayPalError("PayPal returned an invalid response.")
+    return result
+
+
+def _access_token(credentials: dict[str, str]) -> str:
+    result = _request_json(
+        "POST",
+        f"{_paypal_api_base()}/v1/oauth2/token",
+        client_id=credentials["client_id"],
+        client_secret=credentials["client_secret"],
+    )
+    token = result.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise PayPalError("PayPal authentication did not return an access token.")
+    return token
+
+
+def _authenticated_request(
+    method: str,
+    path: str,
+    credentials: dict[str, str],
+    *,
+    payload: dict[str, Any] | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    token = _access_token(credentials)
+    try:
+        with httpx.Client(timeout=15, follow_redirects=False) as http:
+            response = http.request(
+                method,
+                f"{_paypal_api_base()}{path}",
+                headers={
+                    "Authorization": "Bearer {}".format(token),
+                    "Accept": "application/json",
+                    **({"PayPal-Request-Id": request_id} if request_id else {}),
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise PayPalError("PayPal could not complete the request.") from error
+    if not isinstance(result, dict):
+        raise PayPalError("PayPal returned an invalid response.")
+    return result
+
+
+def minor_to_paypal_amount(amount_minor: int) -> str:
+    return format(Decimal(amount_minor) / Decimal(100), ".2f")
+
+
+def paypal_amount_to_minor(value: str) -> int:
+    try:
+        amount = Decimal(value)
+    except Exception as error:
+        raise PayPalError("PayPal returned an invalid amount.") from error
+    if not amount.is_finite() or amount < 0 or amount * 100 != (amount * 100).to_integral_value():
+        raise PayPalError("PayPal returned an invalid amount.")
+    return int(amount * 100)
+
+
+def create_paypal_order(
+    credentials: dict[str, str],
+    *,
+    public_transaction_id: str,
+    business_name: str,
+    amount_minor: int,
+    currency: str,
+    checkout_url: str,
+) -> tuple[str, str]:
+    parsed_checkout_url = urlparse(checkout_url)
+    if parsed_checkout_url.scheme != "https" and parsed_checkout_url.hostname not in {
+        "localhost",
+        "127.0.0.1",
+    }:
+        raise PayPalError("The public checkout URL must use HTTPS.")
+    request_id = f"AGC{public_transaction_id.removeprefix('txn_')[:32]}"
+    result = _authenticated_request(
+        "POST",
+        "/v2/checkout/orders",
+        credentials,
+        request_id=request_id,
+        payload={
+            "intent": "CAPTURE",
+            "purchase_units": [
+                {
+                    "reference_id": public_transaction_id,
+                    "custom_id": public_transaction_id,
+                    "invoice_id": public_transaction_id,
+                    "amount": {
+                        "currency_code": currency,
+                        "value": minor_to_paypal_amount(amount_minor),
+                    },
+                }
+            ],
+            "application_context": {
+                "brand_name": business_name[:127],
+                "user_action": "PAY_NOW",
+                "return_url": f"{checkout_url}?paypal_order_id={{CHECKOUT.ORDER.ID}}",
+                "cancel_url": f"{checkout_url}?paypal_cancelled=1",
+            },
+        },
+    )
+    order_id = result.get("id")
+    links = result.get("links")
+    if not isinstance(order_id, str) or not isinstance(links, list):
+        raise PayPalError("PayPal did not create an order.")
+    approval_url = next(
+        (
+            link.get("href")
+            for link in links
+            if isinstance(link, dict) and link.get("rel") in {"approve", "payer-action"}
+        ),
+        None,
+    )
+    parsed_approval = urlparse(approval_url) if isinstance(approval_url, str) else None
+    if (
+        not isinstance(approval_url, str)
+        or parsed_approval is None
+        or parsed_approval.scheme != "https"
+        or not (
+            parsed_approval.hostname == "paypal.com"
+            or parsed_approval.hostname.endswith(".paypal.com")
+        )
+    ):
+        raise PayPalError("PayPal did not return a valid approval URL.")
+    return order_id, approval_url
+
+
+def get_paypal_order(credentials: dict[str, str], order_id: str) -> dict[str, Any]:
+    if not order_id or len(order_id) > 128:
+        raise PayPalError("PayPal order reference is invalid.")
+    return _authenticated_request(
+        "GET",
+        f"/v2/checkout/orders/{order_id}",
+        credentials,
+    )
+
+
+def capture_paypal_order(
+    credentials: dict[str, str],
+    order_id: str,
+    *,
+    request_id: str,
+) -> dict[str, Any]:
+    if not order_id or len(order_id) > 128:
+        raise PayPalError("PayPal order reference is invalid.")
+    return _authenticated_request(
+        "POST",
+        f"/v2/checkout/orders/{order_id}/capture",
+        credentials,
+        request_id=request_id,
+        payload={},
+    )
+
+
+def create_paypal_refund(
+    credentials: dict[str, str],
+    capture_id: str,
+    *,
+    amount_minor: int,
+    currency: str,
+    request_id: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    if not capture_id or len(capture_id) > 128:
+        raise PayPalError("PayPal capture reference is invalid.")
+    payload: dict[str, Any] = {
+        "amount": {
+            "currency_code": currency,
+            "value": minor_to_paypal_amount(amount_minor),
+        }
+    }
+    if reason:
+        payload["note_to_payer"] = reason[:255]
+    return _authenticated_request(
+        "POST",
+        f"/v2/payments/captures/{capture_id}/refund",
+        credentials,
+        request_id=request_id,
+        payload=payload,
+    )
+
+
+def get_paypal_refund(credentials: dict[str, str], refund_id: str) -> dict[str, Any]:
+    if not refund_id or len(refund_id) > 128:
+        raise PayPalError("PayPal refund reference is invalid.")
+    return _authenticated_request(
+        "GET",
+        f"/v2/payments/refunds/{refund_id}",
+        credentials,
+    )
+
+
+def verified_refund_details(
+    refund: dict[str, Any],
+    *,
+    expected_refund_id: str,
+    expected_amount_minor: int,
+    expected_currency: str,
+) -> tuple[str, str, int, str, bool]:
+    refund_id = refund.get("id")
+    if not isinstance(refund_id, str) or refund_id != expected_refund_id:
+        raise PayPalError("PayPal refund reference does not match the request.")
+    amount = refund.get("amount")
+    if not isinstance(amount, dict):
+        raise PayPalError("PayPal refund amount is missing.")
+    amount_minor = paypal_amount_to_minor(str(amount.get("value", "")))
+    currency = str(amount.get("currency_code", ""))
+    verified = (
+        refund.get("status") == "COMPLETED"
+        and amount_minor == expected_amount_minor
+        and currency == expected_currency
+    )
+    return refund_id, str(refund.get("status", "")), amount_minor, currency, verified
+
+
+def verified_capture_details(
+    order: dict[str, Any],
+    *,
+    expected_transaction_id: str,
+) -> tuple[str, str, int, str, bool]:
+    if order.get("status") != "COMPLETED":
+        return str(order.get("id", "")), "", 0, "", False
+    purchase_units = order.get("purchase_units")
+    if not isinstance(purchase_units, list) or not purchase_units:
+        raise PayPalError("PayPal order has no purchase details.")
+    unit = purchase_units[0]
+    if not isinstance(unit, dict) or unit.get("custom_id") != expected_transaction_id:
+        raise PayPalError("PayPal order does not match the Reactant transaction.")
+    amount = unit.get("amount")
+    payments = unit.get("payments")
+    captures = payments.get("captures") if isinstance(payments, dict) else None
+    if not isinstance(amount, dict) or not isinstance(captures, list) or not captures:
+        raise PayPalError("PayPal order has no verified capture.")
+    capture = next(
+        (
+            entry
+            for entry in captures
+            if isinstance(entry, dict) and entry.get("status") == "COMPLETED"
+        ),
+        None,
+    )
+    if not isinstance(capture, dict):
+        pending = captures[0]
+        pending_amount = pending.get("amount", {}) if isinstance(pending, dict) else {}
+        return (
+            str(order.get("id", "")),
+            "",
+            paypal_amount_to_minor(str(pending_amount.get("value", "0"))),
+            str(pending_amount.get("currency_code", "")),
+            False,
+        )
+    captured_amount = capture.get("amount")
+    if not isinstance(captured_amount, dict):
+        raise PayPalError("PayPal capture amount is missing.")
+    return (
+        str(order.get("id", "")),
+        str(capture.get("id", "")),
+        paypal_amount_to_minor(str(captured_amount.get("value", "0"))),
+        str(captured_amount.get("currency_code", "")),
+        True,
+    )
+
+
+def validate_paypal_credentials(credentials: dict[str, str]) -> None:
+    _access_token(credentials)

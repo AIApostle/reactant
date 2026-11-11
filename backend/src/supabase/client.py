@@ -32,6 +32,8 @@ class SupabaseSettings(BaseSettings):
     internal_service_token: SecretStr | None = None
     allowed_web_origins: str = ""
     paypal_api_base_url: str = "https://api-m.sandbox.paypal.com"
+    paypal_receiving_countries: str = "US"
+    agentcard_enabled: bool = False
     public_api_base_url: str | None = None
     public_frontend_url: str = "http://localhost:5173"
     shopify_client_id: str | None = None

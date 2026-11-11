@@ -1965,6 +1965,45 @@
   font-size: 12px;
 }
 
+.integration-install-code {
+  width: 100%;
+  min-height: 54px;
+  padding: 8px;
+  border: 1px solid #dce5dc;
+  border-radius: 6px;
+  color: #34443a;
+  background: #fff;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+.integration-api-docs {
+  margin-top: 6px;
+  color: #4b5c50;
+  font-size: 10px;
+}
+
+.integration-api-docs summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.integration-api-docs p {
+  margin: 6px 0;
+  font-size: 10px;
+}
+
+.integration-api-docs pre {
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: #fff;
+  color: #34443a;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .integration-status small {
   margin-left: auto;
   color: #8a958c;
@@ -2267,6 +2306,18 @@
 .connection-form .rt-TextFieldRoot {
   height: 36px;
   margin-bottom: 13px;
+}
+
+.connection-select {
+  width: 100%;
+  height: 36px;
+  margin-bottom: 13px;
+  padding: 0 10px;
+  border: 1px solid #d9e0d9;
+  border-radius: 6px;
+  color: #314036;
+  background: white;
+  font: inherit;
 }
 
 .connection-form .field-label:not(:first-child) {
@@ -3655,6 +3706,17 @@
 .catalog-product-actions .rt-Button {
   height: 29px;
   font-size: 9px;
+}
+
+.catalog-remove-dialog {
+  max-width: 390px;
+}
+
+.catalog-remove-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 20px;
 }
 
 .catalog-remove-button {

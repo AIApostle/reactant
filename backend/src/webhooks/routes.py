@@ -3,9 +3,12 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from urllib.parse import quote
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
@@ -15,6 +18,13 @@ from supabase import Client
 from src.schemas.common import ResourceEnvelope
 from src.schemas.webhooks import ProviderWebhookPayload, WebhookAck
 from src.agent.config import get_agent_runtime_settings
+from src.agent.customer_images import (
+    MAX_CUSTOMER_IMAGE_BYTES,
+    CustomerImage,
+    history_with_customer_images,
+    normalize_customer_image,
+    store_customer_images,
+)
 from src.agent.runtime import (
     build_business_agent,
     find_business_products,
@@ -26,9 +36,12 @@ from src.supabase.client import (
 )
 from src.supabase.repository import execute
 from cryptography.fernet import Fernet, InvalidToken
+from src.agentcard.paypal import PayPalError
+from src.agentcard.routes import process_verified_paypal_webhook
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 MAX_WEBHOOK_BODY = 1024 * 1024
 
 
@@ -198,6 +211,83 @@ def _wants_product_images(text: str) -> bool:
     return any(term in normalized for term in ("image", "photo", "picture", "show me", "send me"))
 
 
+def _telegram_download_image(bot_token: str, file_id: str) -> CustomerImage:
+    try:
+        with httpx.Client(timeout=20, follow_redirects=False) as http:
+            file_response = http.get(
+                f"https://api.telegram.org/bot{bot_token}/getFile",
+                params={"file_id": file_id},
+            )
+            file_response.raise_for_status()
+            file_payload = file_response.json()
+            file_data = file_payload.get("result") if isinstance(file_payload, dict) else None
+            file_path = file_data.get("file_path") if isinstance(file_data, dict) else None
+            file_size = file_data.get("file_size") if isinstance(file_data, dict) else None
+            if (
+                not isinstance(file_payload, dict)
+                or not file_payload.get("ok")
+                or not isinstance(file_path, str)
+                or not file_path
+                or ".." in file_path.split("/")
+                or len(file_path) > 512
+                or not re.fullmatch(r"[A-Za-z0-9_./-]+", file_path)
+            ):
+                raise ValueError("Telegram did not return a valid image file.")
+            if isinstance(file_size, int) and file_size > MAX_CUSTOMER_IMAGE_BYTES:
+                raise ValueError("The Telegram image is larger than 5 MB.")
+            file_url = (
+                f"https://api.telegram.org/file/bot{bot_token}/{quote(file_path, safe='/')}"
+            )
+            with http.stream("GET", file_url) as image_response:
+                image_response.raise_for_status()
+                content_length = image_response.headers.get("content-length")
+                if content_length and int(content_length) > MAX_CUSTOMER_IMAGE_BYTES:
+                    raise ValueError("The Telegram image is larger than 5 MB.")
+                content = bytearray()
+                for chunk in image_response.iter_bytes():
+                    content.extend(chunk)
+                    if len(content) > MAX_CUSTOMER_IMAGE_BYTES:
+                        raise ValueError("The Telegram image is larger than 5 MB.")
+    except (httpx.HTTPError, ValueError) as error:
+        raise RuntimeError("The Telegram image could not be downloaded.") from error
+    return normalize_customer_image(bytes(content), file_path.rsplit("/", 1)[-1])
+
+
+def _telegram_message_images(
+    bot_token: str,
+    message: dict[str, Any],
+) -> list[CustomerImage]:
+    photo_sizes = message.get("photo")
+    file_id: str | None = None
+    file_name = "telegram-image"
+    if isinstance(photo_sizes, list):
+        candidates = [
+            photo
+            for photo in photo_sizes
+            if isinstance(photo, dict) and isinstance(photo.get("file_id"), str)
+        ]
+        if candidates:
+            largest = max(
+                candidates,
+                key=lambda photo: int(photo.get("file_size") or 0)
+                or int(photo.get("width") or 0) * int(photo.get("height") or 0),
+            )
+            file_id = largest["file_id"]
+    document = message.get("document")
+    if (
+        file_id is None
+        and isinstance(document, dict)
+        and document.get("mime_type") in {"image/jpeg", "image/png", "image/webp"}
+        and isinstance(document.get("file_id"), str)
+    ):
+        file_id = document["file_id"]
+        file_name = str(document.get("file_name") or file_name)
+    if file_id is None:
+        return []
+    image = _telegram_download_image(bot_token, file_id)
+    return [CustomerImage(image.data, image.content_type, file_name or image.file_name)]
+
+
 def _process_telegram_update(
     client: Client,
     *,
@@ -216,9 +306,26 @@ def _process_telegram_update(
     chat_id = str(chat.get("id", ""))
     update_id = str(payload["update_id"])
     text = message.get("text") or message.get("caption") or ""
-    photos = message.get("photo")
-    if photos:
-        text = f"{text}\n[Customer attached a Telegram photo]" if text else "[Customer attached a Telegram photo]"
+    if not isinstance(text, str):
+        text = ""
+    try:
+        customer_images = _telegram_message_images(credentials["bot_token"], message)
+    except (RuntimeError, ValueError) as error:
+        logger.warning(
+            "Telegram customer image could not be processed update_id=%s exception_type=%s",
+            update_id,
+            type(error).__name__,
+        )
+        _telegram_send_message(
+            credentials["bot_token"],
+            chat_id,
+            "I couldn't read that image. Please resend it as a JPEG, PNG, or WebP under 5 MB.",
+        )
+        return
+    if customer_images and not text.strip():
+        text = "Please look at the image I sent and help me with it."
+    elif customer_images:
+        text = f"{text}\n[Customer included an image with this message.]"
     if not chat_id or not isinstance(text, str) or not text.strip():
         return
     provider_conversation_id = f"telegram:{chat_id}"
@@ -260,10 +367,18 @@ def _process_telegram_update(
             .select("id")
             .single()
         )
+    message_id = str(uuid4())
+    image_attachments = store_customer_images(
+        client,
+        business_id=str(business_id),
+        conversation_id=str(conversation["id"]),
+        images=customer_images,
+    )
     customer_message = execute(
         client.table("customer_messages")
         .insert(
             {
+                "id": message_id,
                 "business_id": str(business_id),
                 "conversation_id": conversation["id"],
                 "sender_type": "customer",
@@ -271,6 +386,7 @@ def _process_telegram_update(
                 "text": text[:10000],
                 "visibility": "customer",
                 "delivery_status": "sent",
+                "attachments": image_attachments,
                 "provider_message_id": update_id,
                 "idempotency_key": f"telegram:{channel_id}:{update_id}",
                 "created_at": now,
@@ -308,29 +424,46 @@ def _process_telegram_update(
         return
     history_rows = execute(
         client.table("customer_messages")
-        .select("sender_type,text")
+        .select("id,sender_type,text,attachments")
         .eq("business_id", str(business_id))
         .eq("conversation_id", conversation["id"])
+        .neq("id", message_id)
         .order("created_at", desc=True)
         .limit(8)
     )
-    history = [
-        {
-            "role": "assistant" if row["sender_type"] == "agent" else "user",
-            "content": [{"text": row["text"][:1500]}],
-        }
-        for row in reversed(history_rows)
-    ]
+    history = history_with_customer_images(
+        client,
+        business_id=str(business_id),
+        conversation_id=str(conversation["id"]),
+        rows=history_rows,
+    )
+    created_checkout_urls: list[str] = []
     agent = build_business_agent(
         client=client,
         business_id=str(business_id),
         settings=settings,
         business=business,
         agent_config=agent_config,
-        history=history[:-1],
+        history=history,
         audience="customer",
+        conversation_id=str(conversation["id"]),
+        customer_name=customer_name,
+        customer_reference=chat_id,
+        idempotency_key=f"telegram:{channel_id}:{update_id}",
+        created_checkout_urls=created_checkout_urls,
+        vision_enabled=bool(customer_images),
     )
-    response_text = invoke_business_agent(agent, text, audience="customer")
+    response_text = invoke_business_agent(
+        agent,
+        text,
+        audience="customer",
+        images=customer_images,
+    )
+    sent_image_attachments: list[dict[str, str]] = []
+    if created_checkout_urls:
+        response_text = (
+            f"{response_text}\n\nSecure checkout: {created_checkout_urls[-1]}"
+        )
     if _wants_product_images(text):
         image_query = " ".join(
             word for word in text.split()
@@ -344,6 +477,9 @@ def _process_telegram_update(
                     chat_id,
                     image_url,
                     caption=product["name"],
+                )
+                sent_image_attachments.append(
+                    {"type": "image", "url": image_url, "alt": product["name"]}
                 )
         if image_products and any(product.get("image_urls") for product in image_products):
             response_text = (
@@ -365,6 +501,7 @@ def _process_telegram_update(
                 "text": response_text,
                 "visibility": "customer",
                 "delivery_status": "sent",
+                "attachments": sent_image_attachments,
                 "provider_message_id": f"agent:{update_id}",
                 "idempotency_key": f"agent:telegram:{channel_id}:{update_id}",
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -592,16 +729,23 @@ async def receive_paypal_webhook(
                 data={"grant_type": "client_credentials"},
             )
             token_response.raise_for_status()
-            access_token = token_response.json().get("access_token")
+            token_payload = token_response.json()
+            access_token = (
+                token_payload.get("access_token")
+                if isinstance(token_payload, dict)
+                else None
+            )
             if not isinstance(access_token, str):
                 raise ValueError("PayPal access token missing.")
             verification_response = await http.post(
                 f"{api_base}/v1/notifications/verify-webhook-signature",
-                headers={"Authorization": f"Bearer {access_token}"},
+                headers={"Authorization": "Bearer {}".format(access_token)},
                 json=verification_payload,
             )
             verification_response.raise_for_status()
             verification = verification_response.json()
+            if not isinstance(verification, dict):
+                raise ValueError("PayPal webhook verification response is invalid.")
     except (httpx.HTTPError, ValueError, json.JSONDecodeError) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -624,6 +768,47 @@ async def receive_paypal_webhook(
         payload=payload,
         topic=topic,
     )
+    try:
+        await asyncio.to_thread(
+            process_verified_paypal_webhook,
+            client,
+            integration_id=str(integration_id),
+            business_id=str(business_id),
+            payload=payload,
+        )
+    except (HTTPException, PayPalError) as error:
+        try:
+            await asyncio.to_thread(
+                execute,
+                client.table("agentcard_webhook_events")
+                .update(
+                    {
+                        "processing_status": "failed",
+                        "failure_reason": type(error).__name__,
+                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .eq("provider", "paypal")
+                .eq("provider_event_id", event_id),
+            )
+        except HTTPException as persistence_error:
+            logger.error(
+                "PayPal webhook failure state could not be saved event_id=%s exception_type=%s",
+                event_id,
+                type(persistence_error).__name__,
+            )
+        logger.error(
+            "Verified PayPal webhook processing failed event_id=%s exception_type=%s",
+            event_id,
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_event_processing_unavailable",
+                "message": "The verified PayPal event could not be processed yet.",
+            },
+        ) from error
     return _ack(request, duplicate)
 
 

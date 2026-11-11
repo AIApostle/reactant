@@ -49,17 +49,19 @@ import {
   apiRequestWithHeaders,
   businessPath,
   newIdempotencyKey,
+  publicApiBaseUrl,
   type AgentConfig,
   type Approval,
   type Business,
   type Integration,
   type OwnerMessage,
   type TelegramSetup,
+  type WebsiteChatInstall,
 } from './api'
 import { getSupabaseClient, isSupabaseConfigured } from './supabase'
 
 type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings'
-type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal'
+type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal' | 'Website chat' | 'Walrus Memory'
 type ConversationStatus = 'Needs reply' | 'Open' | 'Resolved'
 
 type Conversation = {
@@ -301,6 +303,8 @@ function App() {
     Shopify: integrations.some((item) => item.provider === 'shopify' && item.status === 'connected'),
     Telegram: integrations.some((item) => item.provider === 'telegram' && item.status === 'connected'),
     PayPal: integrations.some((item) => item.provider === 'paypal' && item.status === 'connected'),
+    'Website chat': integrations.some((item) => item.provider === 'website_chat' && item.status === 'connected'),
+    'Walrus Memory': integrations.some((item) => item.provider === 'memwal' && item.status === 'connected'),
   }
 
   useEffect(() => {
@@ -1124,6 +1128,8 @@ function Catalog({
   currency: string
 }) {
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [productToRemove, setProductToRemove] = useState<CatalogProduct | null>(null)
+  const [removingProduct, setRemovingProduct] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -1297,15 +1303,20 @@ function Catalog({
     }
   }
 
-  async function removeProduct(product: CatalogProduct) {
-    if (!window.confirm(`Remove ${product.name} from the catalog?`)) return
+  async function removeProduct() {
+    if (!productToRemove || removingProduct) return
+    const product = productToRemove
+    setRemovingProduct(true)
     try {
       onMutationStart()
       await apiRequest(businessPath(businessId, `/products/${encodeURIComponent(product.id)}`), { method: 'DELETE' })
       setProducts((current) => current.filter((item) => item.id !== product.id))
+      setProductToRemove(null)
       notify(`${product.name} removed from the catalog`)
     } catch (error) {
       notify(error instanceof Error ? error.message : 'The product could not be removed.')
+    } finally {
+      setRemovingProduct(false)
     }
   }
 
@@ -1399,7 +1410,7 @@ function Catalog({
                 </div>
                 <div className="catalog-product-actions">
                   <Button variant="soft" color="gray" onClick={() => openProductForm(product)}>Edit product</Button>
-                  <button className="catalog-remove-button" onClick={() => { void removeProduct(product) }} aria-label={`Remove ${product.name}`}><Trash size={16} /></button>
+                  <button className="catalog-remove-button" onClick={() => setProductToRemove(product)} aria-label={`Remove ${product.name}`}><Trash size={16} /></button>
                 </div>
               </div>
             </article>
@@ -1475,6 +1486,39 @@ function Catalog({
               <Button type="submit" disabled={savingProduct || readingImages}>{savingProduct ? 'Saving...' : editingId ? 'Save changes' : 'Add to catalog'}</Button>
             </div>
           </form>
+        </Dialog.Content>
+      </Dialog.Root>
+      <Dialog.Root
+        open={productToRemove !== null}
+        onOpenChange={(open) => {
+          if (!open && !removingProduct) setProductToRemove(null)
+        }}
+      >
+        <Dialog.Content className="dialog-content catalog-remove-dialog">
+          <Dialog.Title className="dialog-title">Remove product?</Dialog.Title>
+          <Dialog.Description className="dialog-description">
+            {productToRemove
+              ? `Remove ${productToRemove.name} from your catalog? Your agent will no longer be able to recommend it.`
+              : 'Remove this product from your catalog?'}
+          </Dialog.Description>
+          <div className="catalog-remove-actions">
+            <Button
+              variant="soft"
+              color="gray"
+              disabled={removingProduct}
+              onClick={() => setProductToRemove(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              disabled={removingProduct}
+              onClick={() => { void removeProduct() }}
+            >
+              <Trash size={15} />
+              {removingProduct ? 'Removing...' : 'Remove product'}
+            </Button>
+          </div>
         </Dialog.Content>
       </Dialog.Root>
     </div>
@@ -1715,11 +1759,14 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [telegramSetup, setTelegramSetup] = useState<TelegramSetup | null>(null)
+  const [websiteInstall, setWebsiteInstall] = useState<WebsiteChatInstall | null>(null)
   const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
     { provider: 'WooCommerce', key: 'woocommerce', description: 'Sync products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
     { provider: 'Shopify', key: 'shopify', description: 'Import products and inventory from your Shopify store.', icon: Storefront, category: 'Store' },
     { provider: 'Telegram', key: 'telegram', description: 'Receive customer messages through your Telegram bot.', icon: TelegramLogo, category: 'Messaging' },
     { provider: 'PayPal', key: 'paypal', description: 'Create customer checkout sessions and verify payments.', icon: CreditCard, category: 'Payments' },
+    { provider: 'Website chat', key: 'website_chat', description: 'Add a floating customer-support chat to your website or web app.', icon: ChatCircleDots, category: 'Messaging' },
+    { provider: 'Walrus Memory', key: 'memwal', description: 'Give the agent private, tenant-scoped long-term memory.', icon: Robot, category: 'Memory' },
   ]
 
   useEffect(() => {
@@ -1733,6 +1780,13 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     }
     window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`)
   }, [notify])
+
+  async function loadWebsiteInstall(integrationId: string) {
+    const install = await apiRequest<WebsiteChatInstall>(
+      businessPath(businessId, `/integrations/${integrationId}/website-chat-install`),
+    )
+    setWebsiteInstall(install)
+  }
 
   async function refreshIntegration(integrationId: string) {
     const updated = await apiRequest<Integration>(businessPath(businessId, `/integrations/${integrationId}`))
@@ -1761,7 +1815,15 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       }
       return
     }
-    const credentials = dialogProvider === 'WooCommerce'
+    const credentials = dialogProvider === 'Website chat'
+      ? { allowed_origin: String(formData.get('allowed_origin') ?? '').trim() }
+      : dialogProvider === 'Walrus Memory'
+        ? {
+            account_id: String(formData.get('memwal_account_id') ?? '').trim(),
+            private_key: String(formData.get('memwal_private_key') ?? ''),
+            network: String(formData.get('memwal_network') ?? 'prod'),
+          }
+      : dialogProvider === 'WooCommerce'
       ? {
           store_url: String(formData.get('store_url') ?? '').trim(),
           consumer_key: String(formData.get('consumer_key') ?? ''),
@@ -1780,12 +1842,29 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     try {
       const created = await apiRequest<Integration>(businessPath(businessId, '/integrations'), {
         method: 'POST',
-        body: JSON.stringify({ provider: dialogProvider.toLowerCase(), credentials }),
+        body: JSON.stringify({
+          provider: dialogProvider === 'Website chat'
+            ? 'website_chat'
+            : dialogProvider === 'Walrus Memory'
+              ? 'memwal'
+              : dialogProvider.toLowerCase(),
+          credentials,
+        }),
       })
       setIntegrations((items) => [created, ...items.filter((item) => item.id !== created.id)])
       form.reset()
       setDialogProvider(null)
-      if (created.provider === 'telegram') {
+      if (created.provider === 'website_chat') {
+        await loadWebsiteInstall(created.id)
+        notify('Website chat is ready to install.')
+      } else if (created.provider === 'memwal') {
+        const connected = await apiRequest<Integration>(
+          businessPath(businessId, `/integrations/${created.id}/test`),
+          { method: 'POST' },
+        )
+        setIntegrations((items) => items.map((item) => item.id === connected.id ? connected : item))
+        notify('Walrus Memory connected.')
+      } else if (created.provider === 'telegram') {
         void testConnection(created)
       } else if (created.provider === 'woocommerce') {
         const connected = await apiRequest<Integration>(
@@ -1847,6 +1926,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     try {
       await apiRequest(businessPath(businessId, `/integrations/${integration.id}`), { method: 'DELETE' })
       setIntegrations((items) => items.filter((item) => item.id !== integration.id))
+      if (integration.provider === 'website_chat' && websiteInstall) setWebsiteInstall(null)
       notify(`${integration.provider} was disconnected.`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The integration could not be disconnected.')
@@ -1880,6 +1960,35 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                   <small>{telegramSetup.webhook_url}</small>
                 </div>
               )}
+              {provider.key === 'website_chat' && connection && websiteInstall?.business_id === businessId && (
+                <div className="integration-setup-details">
+                  <strong>Install on your website</strong>
+                  <small>Add this snippet before the closing &lt;/body&gt; tag.</small>
+                  <textarea className="integration-install-code" aria-label="Website chat installation code" readOnly value={websiteInstall.script} />
+                  <Button variant="soft" color="gray" onClick={() => {
+                    void navigator.clipboard.writeText(websiteInstall.script)
+                      .then(() => notify('Installation code copied.'))
+                      .catch(() => setError('Could not copy the installation code. Select and copy it manually.'))
+                  }}>Copy code</Button>
+                  <small>Custom web apps can load the same script and use the public session API at {publicApiBaseUrl}/public/widgets.</small>
+                  <details className="integration-api-docs">
+                    <summary>Connect a custom app with the API</summary>
+                    <p>Register the app's exact origin above. Create a session with that origin, then use its short-lived session token for HTTP and WebSocket requests.</p>
+                    <pre><code>{`POST ${publicApiBaseUrl}/public/widgets/${businessId}/sessions
+Origin: https://your-app.example
+Content-Type: application/json
+
+{"visitor_id":"<UUID>","memory_consent":false}
+
+POST ${publicApiBaseUrl}/public/widgets/sessions/messages
+Authorization: Bearer <session_token>
+{"text":"Hello"}
+
+WebSocket: ${publicApiBaseUrl.replace(/^http/, 'ws')}/public/widgets/ws
+Subprotocol: reactant-widget.<session_token>`}</code></pre>
+                  </details>
+                </div>
+              )}
               <div className="integration-card-actions">
                 {connection
                   ? <>
@@ -1889,14 +1998,23 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                         {!connected && connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
                       </div>
                       <div className="integration-card-actions-buttons">
-                        {provider.key !== 'telegram' && provider.key !== 'shopify' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
+                        {provider.key !== 'telegram' && provider.key !== 'shopify' && provider.key !== 'website_chat' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
                         {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
                         <Button variant="soft" color="red" disabled={saving} onClick={() => void disconnect(connection)}>Disconnect</Button>
                       </div>
                     </>
-                  : provider.key === 'paypal'
-                    ? <Button onClick={() => { setError(''); setDialogProvider('PayPal') }}>Connect</Button>
-                    : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>Connect</Button>}
+                  : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
+                {provider.key === 'website_chat' && connection && (
+                  <Button variant="soft" color="gray" onClick={() => { setError(''); setDialogProvider('Website chat') }}>Add custom</Button>
+                )}
+                {provider.key === 'website_chat' && connection && !websiteInstall && (
+                  <Button variant="soft" color="gray" disabled={saving} onClick={() => {
+                    setSaving(true)
+                    void loadWebsiteInstall(connection.id)
+                      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Website chat install details could not be loaded.'))
+                      .finally(() => setSaving(false))
+                  }}>Show install code</Button>
+                )}
               </div>
             </article>
           )
@@ -1913,10 +2031,33 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                 ? 'Enter your store domain. Shopify will securely ask you to approve the connection.'
               : dialogProvider === 'Telegram'
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
-                : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
+              : dialogProvider === 'Website chat'
+                ? 'Register the exact HTTPS origin where the widget will run. For local testing, use localhost.'
+                : dialogProvider === 'Walrus Memory'
+                  ? 'Connect your Walrus Memory account. Memory is isolated by business and customer, and customer memories are only used after opt-in.'
+                  : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
           </Dialog.Description>
           <form className="connection-form" onSubmit={(event) => void createConnection(event)}>
-            {dialogProvider === 'WooCommerce' ? (
+            {dialogProvider === 'Website chat' ? (
+              <>
+                <label className="field-label" htmlFor="connection-website-origin">Website origin</label>
+                <TextField.Root id="connection-website-origin" name="allowed_origin" type="url" placeholder="https://shop.example.com" pattern="https://.*|http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?" required />
+                <p className="form-note">Enter only the site origin, without a path. You can add another custom domain later. The origin is checked on every chat request.</p>
+              </>
+            ) : dialogProvider === 'Walrus Memory' ? (
+              <>
+                <label className="field-label" htmlFor="memwal-account-id">Walrus Memory account ID</label>
+                <TextField.Root id="memwal-account-id" name="memwal_account_id" autoComplete="off" required />
+                <label className="field-label" htmlFor="memwal-private-key">Delegate private key</label>
+                <TextField.Root id="memwal-private-key" name="memwal_private_key" type="password" autoComplete="off" required />
+                <label className="field-label" htmlFor="memwal-network">Network</label>
+                <select id="memwal-network" name="memwal_network" className="connection-select" defaultValue="prod">
+                  <option value="prod">Production</option>
+                  <option value="staging">Staging</option>
+                </select>
+                <p className="form-note">Credentials are encrypted at rest. The agent stores durable owner facts and only customer preferences after explicit consent.</p>
+              </>
+            ) : dialogProvider === 'WooCommerce' ? (
               <>
                 <label className="field-label" htmlFor="connection-store-url">Store URL</label>
                 <TextField.Root id="connection-store-url" name="store_url" type="url" placeholder="https://yourstore.com" pattern="https://.*" required />

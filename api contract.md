@@ -413,52 +413,72 @@ merchant secrets. These are server-side integrations:
    reports.
 3. Submit the credentials once to
    `POST /businesses/{business_id}/integrations` over HTTPS with the Supabase
-   access token. The response is a redacted integration record with
-   `status: "pending"`; it never contains credentials.
-4. Display `pending` as **Setup submitted — not verified**. Do not display
-   `connected` until a future backend test/sync response reports it.
-5. The current backend returns `503 provider_adapter_unavailable` for Test and
-   `503 sync_worker_unavailable` for Sync. Until those adapters are deployed,
-   the frontend must hide or disable those buttons and explain that provider
-   verification is not available yet. Do not retry them automatically.
+   access token. The response is a redacted integration record; it never
+   contains credentials.
+4. Use the provider Test action to validate credentials. Display `connected`
+   only after the backend reports a successful provider test.
+5. Disable Sync when that integration does not support product synchronization.
+   Do not retry provider actions automatically.
 6. On disconnect, call the backend `DELETE` endpoint and remove the connection
    from the UI only after a successful response.
 
 For PayPal specifically, the merchant enters the PayPal REST app client ID,
 client secret, and webhook ID in the owner/admin setup form. The frontend does
 not use the PayPal JavaScript SDK for merchant authentication and must never
-receive the client secret. The backend will exchange credentials server-side,
-configure/verify the webhook, and expose only health and checkout results.
+receive the client secret. The backend exchanges credentials server-side,
+validates them before marking the integration connected, and verifies webhook
+signatures.
 OAuth authorization routes are listed in this contract but are currently
 implemented for Shopify. Shopify authorization requires the backend
 `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, and an exact registered callback
 URL. The frontend submits only the shop domain and follows the returned
 `authorization_url`; it never receives the Shopify access token.
 
-### Frontend customer checkout flow
+### AgentCard customer checkout flow
 
-Customer checkout is always initiated through the backend, never by trusting
-amounts or payment state supplied by the browser:
+The Business Agent can prepare a transaction only after explicit purchase
+intent and only from active catalog product IDs and quantities. It never sets
+prices, shipping, discounts, or totals. The public checkout endpoints are
+token-protected; no customer Supabase account is required.
 
-1. Create or load the validated order through the business API.
-2. Call `POST /businesses/{business_id}/orders/{order_id}/checkout` with a
-   stable `Idempotency-Key`.
-3. If the response is `202` with `status: "approval_required"`, show
-   **Awaiting business approval** and poll the approval/resource state. Do not
-   open PayPal yet.
-4. If the response is `checkout_created`, open the returned `checkout_url`
-   using a normal top-level navigation or a clearly labelled new tab.
-5. A return from PayPal is only a navigation event. Show **Payment being
-   verified** and refresh the order; only a backend order/payment response or
-   realtime `payment.*` event can show **Paid**.
-6. Treat `503 paypal_unavailable` as a retryable setup/provider error, not as
-   a paid, cancelled, or completed checkout. Preserve the idempotency key when
-   retrying the same operation.
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/agentcard/checkout/{token}` | Read immutable business, item, amount, and expiry details. |
+| `POST` | `/agentcard/checkout/{token}/authorize` | Record explicit customer consent for the displayed snapshot. |
+| `POST` | `/agentcard/checkout/{token}/payment` | Create or resume the merchant's PayPal checkout. |
+| `POST` | `/agentcard/checkout/{token}/capture` | Ask the backend to capture and independently verify the PayPal order. |
+| `GET` | `/agentcard/checkout/{token}/status` | Poll verified payment/refund state and receipt URL. |
 
-The current backend implements the approval branch and explicitly returns
-`paypal_unavailable` when approval is not required because the PayPal checkout
-adapter is not deployed. The frontend must present that state clearly and
-avoid promising that PayPal is connected or that checkout is available.
+Both `authorize` and `payment` require `{"accepted": true}`. `capture` requires
+`{"provider_order_id": "<PayPal order ID>"}`. A PayPal return URL is only a
+navigation event: the browser must show **Payment being verified** until the
+backend reports `paid`. Checkout URLs expire after 30 minutes and carry a
+high-entropy token stored only as a hash.
+
+The consent record is `internal-consent/v1`; it is not an AP2 mandate or proof
+of AP2 conformance. The backend stores immutable order snapshots, calculates
+amounts from current catalog data, verifies the PayPal order reference, capture
+status, amount, and currency, and uses signed webhooks plus a reconciliation
+worker for delayed provider results.
+
+### AgentCard business transaction management
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/businesses/{business_id}/agentcard/transactions/{transaction_id}` | Read a transaction for a workspace member. |
+| `POST` | `/businesses/{business_id}/agentcard/transactions/{transaction_id}/cancel` | Owner/admin cancellation of an unpaid transaction. |
+| `POST` | `/businesses/{business_id}/agentcard/transactions/{transaction_id}/refunds` | Owner/admin partial or full refund through the connected PayPal account. |
+
+Refund requests require an `Idempotency-Key` header and a JSON body containing
+`amount_minor` and optional `reason`. The backend reserves the remaining
+refundable balance, calls PayPal using the merchant's encrypted credentials,
+and updates the ledger only after verifying the provider refund. Do not treat
+an accepted or pending refund as completed.
+
+The legacy order checkout endpoint below remains a separate workflow. It
+currently supports its approval branch; AgentCard customer purchases use the
+dedicated tokenized endpoints above.
+
 
 ## 6. Business Agent configuration
 
@@ -551,6 +571,34 @@ Every customer reply requires an `Idempotency-Key`. The endpoint returns
 the outbox. This is **queued, not delivered**: the outbound provider delivery
 worker is not implemented. Display an explicit queued/pending state and do
 not tell the customer the reply was delivered.
+
+### Customer images
+
+Telegram customer photos and image documents are fetched server-side using the
+connected bot token. The website widget accepts up to three JPEG, PNG, or WebP
+images in its existing `POST /public/widgets/sessions/messages` body:
+
+```json
+{
+  "text": "Can you tell me what is in this picture?",
+  "images": ["data:image/jpeg;base64,<base64-encoded-image>"]
+}
+```
+
+The widget request must include its origin-bound session token. Each image is
+limited to 5 MB; all images in one message together are limited to 5 MB.
+Images are decoded and re-encoded as JPEG, then stored in the private
+`customer-chat-media` bucket. Business inbox and widget message responses
+receive short-lived signed URLs; raw storage paths are not returned.
+
+The Business Agent receives actual image bytes as multimodal model input, not
+just a text placeholder. When an image is present, the backend selects
+`OPENROUTER_VISION_MODEL_ID` (default `google/gemini-2.5-flash`) instead of the
+text model. Verify the account can access a vision-capable model; provider
+availability, latency, and charges apply. The model must treat image text as
+untrusted input and describe only visible details. Telegram and website chat
+are the currently supported customer-image channels; WhatsApp has no active
+adapter.
 
 ## 8. Private Agent-to-Owner channel
 

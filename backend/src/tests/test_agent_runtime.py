@@ -224,10 +224,28 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
+    def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:
+        settings = AgentRuntimeSettings(
+            openrouter_api_key=SecretStr("test-key"),
+            openrouter_vision_model_id="test/vision-model",
+        )
+        agent = build_business_agent(
+            client=ProductClient(),
+            business_id="business-a",
+            settings=settings,
+            business={"name": "Store", "country": "US", "currency": "USD"},
+            agent_config=None,
+            history=[],
+            audience="customer",
+            vision_enabled=True,
+        )
+        self.assertEqual(agent.model.config["model_id"], "test/vision-model")
+
     def test_product_search_is_tenant_scoped_and_limits_returned_fields(self) -> None:
         client = ProductClient()
         rows = [
             {
+                "id": "product-a",
                 "name": "Canvas bag",
                 "description": "Reusable bag",
                 "price_minor": 2500,
@@ -248,6 +266,7 @@ class AgentRuntimeTests(unittest.TestCase):
             products,
             [
                 {
+                    "product_id": "product-a",
                     "name": "Canvas bag",
                     "description": "Reusable bag",
                     "price_minor": 2500,

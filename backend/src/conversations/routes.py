@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from supabase import Client
 
+from src.agent.customer_images import signed_customer_attachments
 from src.auth.dependencies import AuthenticatedUser, get_current_user
 from src.schemas.common import CollectionEnvelope, PaginationMeta, ResourceEnvelope
 from src.schemas.conversations import (
@@ -31,7 +32,7 @@ INBOX_CONVERSATION_FIELDS = (
     f"{CONVERSATION_FIELDS},customer_context,last_message_at"
 )
 MESSAGE_FIELDS = (
-    "id,conversation_id,sender_type,sender_id,text,visibility,delivery_status,created_at"
+    "id,conversation_id,sender_type,sender_id,text,visibility,delivery_status,created_at,attachments"
 )
 
 
@@ -178,6 +179,18 @@ def list_conversation_messages(
         cursor=cursor,
         limit=limit,
     )
+    rows = [
+        {
+            **row,
+            "attachments": signed_customer_attachments(
+                client,
+                business_id=str(business_id),
+                conversation_id=str(conversation_id),
+                attachments=row.get("attachments"),
+            ),
+        }
+        for row in rows
+    ]
     return CollectionEnvelope(
         data=rows,
         meta=PaginationMeta(next_cursor=next_cursor, has_more=has_more),

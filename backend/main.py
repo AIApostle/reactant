@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
 from src.agent.config import get_agent_runtime_settings
+from src.agentcard.routes import router as agentcard_router
+from src.agentcard.receipts import run_agentcard_worker
 from src.agent.routes import router as agent_router
 from src.agent.worker import run_agent_worker
 from src.approvals.routes import router as approvals_router
@@ -30,6 +32,7 @@ from src.search.routes import router as search_router
 from src.settings.routes import router as settings_router
 from src.supabase.client import get_supabase_settings
 from src.webhooks.routes import router as webhooks_router
+from src.widget.routes import router as widget_router
 from src.workspace.routes import router as workspace_router
 
 
@@ -38,9 +41,29 @@ load_dotenv(Path(__file__).with_name(".env"))
 is_production = os.getenv("APP_ENV", "development").lower() == "production"
 
 
+class CheckoutTokenAccessLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        arguments = record.args
+        if (
+            isinstance(arguments, tuple)
+            and len(arguments) >= 3
+            and isinstance(arguments[2], str)
+        ):
+            sanitized_path = re.sub(
+                r"(?<=/agentcard/checkout/)[A-Za-z0-9_-]{32,64}",
+                "[REDACTED]",
+                arguments[2],
+            )
+            record.args = (*arguments[:2], sanitized_path, *arguments[3:])
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(CheckoutTokenAccessLogFilter())
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    worker_task = None
+    worker_tasks = []
     runtime_settings = get_agent_runtime_settings()
     if runtime_settings.strands_agent_enabled:
         if runtime_settings.openrouter_api_key is None:
@@ -52,15 +75,22 @@ async def lifespan(_: FastAPI):
                 "Strands worker is enabled but SUPABASE_SECRET_KEY is not configured."
             )
         else:
-            worker_task = asyncio.create_task(
-                run_agent_worker(),
-                name="strands-agent-worker",
+            worker_tasks.append(
+                asyncio.create_task(run_agent_worker(), name="strands-agent-worker")
             )
+    if get_supabase_settings().supabase_secret_key is not None:
+        worker_tasks.append(
+            asyncio.create_task(
+                run_agentcard_worker(),
+                name="agentcard-receipt-worker",
+            )
+        )
     try:
         yield
     finally:
-        if worker_task is not None:
+        for worker_task in worker_tasks:
             worker_task.cancel()
+        for worker_task in worker_tasks:
             try:
                 await worker_task
             except asyncio.CancelledError:
@@ -73,6 +103,31 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+class WidgetCORSMiddleware(CORSMiddleware):
+    def __init__(self, app, standard_origins, **kwargs):
+        self.standard_origins = set(standard_origins)
+        super().__init__(app, **kwargs)
+
+    async def __call__(self, scope, receive, send):
+        origin = next(
+            (
+                value.decode()
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"origin"
+            ),
+            None,
+        )
+        if (
+            scope["type"] == "http"
+            and scope["path"].startswith("/api/v1/public/widgets/")
+            and origin not in self.standard_origins
+        ):
+            await super().__call__(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
 
 allowed_origins = [
     origin.strip()
@@ -96,6 +151,15 @@ app.add_middleware(
     ],
     expose_headers=["ETag", "X-Request-ID"],
 )
+app.add_middleware(
+    WidgetCORSMiddleware,
+    standard_origins=allowed_origins,
+    allow_origins=[],
+    allow_origin_regex=r"https?://[^/]+",
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 for router in (
     auth_router,
@@ -109,8 +173,10 @@ for router in (
     owner_assistant_router,
     approvals_router,
     orders_router,
+    agentcard_router,
     search_router,
     realtime_router,
+    widget_router,
 ):
     app.include_router(router, prefix="/api/v1")
 app.include_router(internal_owner_assistant_router, prefix="/internal/v1")
@@ -134,7 +200,11 @@ async def add_request_id(request: Request, call_next):
         "request_completed request_id=%s method=%s path=%s status=%s duration_ms=%s",
         request_id,
         request.method,
-        request.url.path,
+        re.sub(
+            r"(?<=/agentcard/checkout/)[A-Za-z0-9_-]{32,64}",
+            "[REDACTED]",
+            request.url.path,
+        ),
         response.status_code,
         round((time.perf_counter() - started_at) * 1000),
     )

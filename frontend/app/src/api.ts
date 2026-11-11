@@ -9,6 +9,8 @@ const apiBaseUrl = (
     : (import.meta.env.VITE_API_BASE_URL || localApiBaseUrl)
 ).replace(/\/$/, '')
 
+export const publicApiBaseUrl = apiBaseUrl
+
 export type ApiEnvelope<T> = { data: T; request_id?: string }
 export type CollectionEnvelope<T> = { data: T[]; meta?: { next_cursor: string | null; has_more: boolean }; request_id?: string }
 
@@ -106,6 +108,32 @@ export async function apiRequestWithHeaders<T>(path: string, init?: RequestInit)
   return request<T>(path, init)
 }
 
+export async function publicApiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    cache: 'no-store',
+    headers: {
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init.headers,
+    },
+  })
+  const payload = await response.json().catch(() => null) as {
+    data?: T
+    error?: { code?: string; message?: string }
+  } | null
+  if (!response.ok) {
+    throw new ApiError(
+      payload?.error?.message ?? `Request failed with status ${response.status}.`,
+      response.status,
+      payload?.error?.code ?? 'request_failed',
+    )
+  }
+  if (!payload || !('data' in payload)) {
+    throw new ApiError('The server returned an invalid response.', response.status, 'invalid_response')
+  }
+  return payload.data as T
+}
+
 export type Business = {
   id: string
   name: string
@@ -122,7 +150,7 @@ export type Business = {
 
 export type Integration = {
   id: string
-  provider: 'woocommerce' | 'telegram' | 'paypal' | 'shopify' | 'whatsapp'
+  provider: 'woocommerce' | 'telegram' | 'paypal' | 'shopify' | 'whatsapp' | 'website_chat' | 'memwal'
   category: string
   status: string
   connected_at: string | null
@@ -130,6 +158,11 @@ export type Integration = {
   last_error: string | null
   granted_scopes: string[]
   sync_status: string
+}
+
+export type WebsiteChatInstall = {
+  script: string
+  business_id: string
 }
 
 export type TelegramSetup = {

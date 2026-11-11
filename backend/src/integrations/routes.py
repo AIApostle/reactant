@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from supabase import Client
 
 from src.auth.dependencies import AuthenticatedUser, get_current_user
+from src.agentcard.paypal import PayPalError, validate_paypal_credentials
 from src.schemas.common import CollectionEnvelope, PaginationMeta, ResourceEnvelope
 from src.schemas.integrations import (
     IntegrationCreate,
@@ -114,6 +115,43 @@ def _validate_provider_credentials(body: IntegrationCreate) -> dict[str, str]:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "validation_error", "message": "The request could not be completed."},
+            )
+    elif body.provider == "website_chat":
+        origin = credentials.get("allowed_origin", "").strip().rstrip("/")
+        try:
+            parsed = urlparse(origin)
+            port = parsed.port
+            hostname = parsed.hostname
+        except ValueError:
+            parsed = urlparse("")
+            port = -1
+            hostname = None
+        if (
+            parsed.scheme not in {"https", "http"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or port == -1
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or (parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"})
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "website_origin_invalid", "message": "Enter a secure website origin, such as https://shop.example.com."},
+            )
+        hostname = hostname.lower()
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        default_port = 443 if parsed.scheme == "https" else 80
+        netloc = hostname if port is None or port == default_port else f"{hostname}:{port}"
+        credentials["allowed_origin"] = f"{parsed.scheme}://{netloc}"
+    elif body.provider == "memwal":
+        if not credentials.get("account_id") or not credentials.get("private_key") or not credentials.get("network"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "validation_error", "message": "Walrus Memory account ID, delegate private key, and network are required."},
             )
     else:
         raise HTTPException(
@@ -272,9 +310,14 @@ def create_integration(
                     "woocommerce": "commerce",
                     "telegram": "messaging",
                     "paypal": "payments",
+                    "website_chat": "messaging",
+                    "memwal": "memory",
                 }[body.provider],
-                "status": "pending",
+                "status": "connected" if body.provider == "website_chat" else "pending",
                 "credentials_ciphertext": ciphertext,
+                "connected_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
+                "last_success_at": datetime.now(timezone.utc).isoformat() if body.provider == "website_chat" else None,
+                "sync_status": "ready" if body.provider == "website_chat" else "idle",
                 "last_error": None,
             }
         )
@@ -313,6 +356,44 @@ def get_integration(
         )
     return ResourceEnvelope(
         data=IntegrationResponse(**integration),
+        request_id=request.state.request_id,
+    )
+
+
+@router.get(
+    "/businesses/{business_id}/integrations/{integration_id}/website-chat-install",
+    response_model=ResourceEnvelope[dict[str, str]],
+)
+def get_website_chat_install(
+    business_id: UUID,
+    integration_id: UUID,
+    request: Request,
+    user: User,
+    client: Database,
+) -> ResourceEnvelope[dict[str, str]]:
+    get_business_membership(client, business_id, user.id)
+    integration = execute(
+        client.table("integrations")
+        .select("id,provider,status")
+        .eq("business_id", str(business_id))
+        .eq("id", str(integration_id))
+        .maybe_single()
+    )
+    if not integration or integration["provider"] != "website_chat" or integration["status"] != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "The website chat integration was not found."},
+        )
+    settings = get_supabase_settings()
+    frontend = settings.public_frontend_url.rstrip("/")
+    api_base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
+    script = (
+        f'<script async src="{frontend}/reactant-chat.js" '
+        f'data-business-id="{business_id}" '
+        f'data-api-url="{api_base}/api/v1"></script>'
+    )
+    return ResourceEnvelope(
+        data={"script": script, "business_id": str(business_id)},
         request_id=request.state.request_id,
     )
 
@@ -410,7 +491,7 @@ def test_integration(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "not_found", "message": "The requested resource was not found."},
         )
-    if integration["provider"] not in {"telegram", "woocommerce", "shopify"}:
+    if integration["provider"] not in {"telegram", "woocommerce", "shopify", "paypal", "memwal", "website_chat"}:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail={"code": "provider_adapter_unavailable", "message": "Testing this provider is not configured."},
@@ -444,6 +525,44 @@ def test_integration(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={"code": "shopify_unavailable", "message": "Shopify rejected the connection."},
             ) from error
+    elif integration["provider"] == "paypal":
+        try:
+            validate_paypal_credentials(
+                {
+                    "client_id": credentials["consumer_key"],
+                    "client_secret": credentials["consumer_secret"],
+                }
+            )
+        except (KeyError, PayPalError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "code": "paypal_credentials_invalid",
+                    "message": "PayPal did not accept these business account credentials.",
+                },
+            ) from error
+    elif integration["provider"] == "website_chat":
+        pass
+    elif integration["provider"] == "memwal":
+        from memwal import MemWalSync
+
+        try:
+            memory = MemWalSync.create(
+                key=credentials["private_key"],
+                account_id=credentials["account_id"],
+                env=credentials["network"],
+            )
+            health = memory.health()
+            if not health:
+                raise RuntimeError("Walrus Memory health check failed.")
+        except (KeyError, OSError, RuntimeError, ValueError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "memwal_unavailable", "message": "Walrus Memory could not verify these credentials."},
+            ) from error
+        finally:
+            if "memory" in locals():
+                memory.close(clear_keys=True)
     else:
         return _test_telegram_integration(
             business_id, integration_id, request, integration, credentials, client

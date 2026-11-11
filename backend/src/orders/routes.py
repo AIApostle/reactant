@@ -26,8 +26,8 @@ ORDER_FIELDS = (
     "id,business_id,customer_name,customer_email,status,payment_status,"
     "amount_minor,currency,created_at,updated_at"
 )
-ORDER_STATUSES = Literal["pending", "confirmed", "processing", "completed", "cancelled"]
-PAYMENT_STATUSES = Literal["unpaid", "pending", "paid", "failed", "refunded"]
+ORDER_STATUSES = Literal["pending", "confirmed", "processing", "completed", "cancelled", "refunded"]
+PAYMENT_STATUSES = Literal["unpaid", "pending", "paid", "failed", "partially_refunded", "refunded"]
 
 
 def _read_order(

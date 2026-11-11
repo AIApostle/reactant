@@ -10,7 +10,17 @@ from strands.types.agent import Limits
 from supabase import Client
 
 from src.agent.config import AgentRuntimeSettings
+from src.agent.customer_images import CustomerImage
+from src.agent.memory import (
+    get_memory_config,
+    memory_namespace,
+    recall_memories,
+    remember_fact,
+)
+from src.agentcard.service import create_agentcard_transaction as create_agentcard_transaction_service
 from src.agent.prompts import build_business_system_prompt
+from src.schemas.agentcard import AgentCardItemRequest
+from src.supabase.client import get_supabase_settings
 from src.supabase.repository import execute
 
 
@@ -81,7 +91,7 @@ def find_business_products(
     bounded_limit = max(1, min(limit, MAX_PRODUCT_SEARCH_RESULTS))
     rows = execute(
         client.table("products")
-        .select("name,description,price_minor,currency,stock_quantity,provider_data,image_asset_ids")
+        .select("id,name,description,price_minor,currency,stock_quantity,provider_data,image_asset_ids")
         .eq("business_id", business_id)
         .eq("status", "active")
         .eq("agent_enabled", True)
@@ -90,6 +100,7 @@ def find_business_products(
     )
     return [
         {
+            "product_id": row["id"],
             "name": row["name"],
             "description": (row.get("description") or "")[:500],
             "price_minor": row["price_minor"],
@@ -147,6 +158,14 @@ def build_business_agent(
     agent_config: dict[str, Any] | None,
     history: list[dict[str, Any]],
     audience: str = "owner",
+    memory_customer_reference: str | None = None,
+    memory_opt_in: bool = False,
+    conversation_id: str | None = None,
+    customer_name: str = "Customer",
+    customer_reference: str = "",
+    idempotency_key: str | None = None,
+    created_checkout_urls: list[str] | None = None,
+    vision_enabled: bool = False,
 ) -> Agent:
     @tool
     def search_business_products(query: str, limit: int = 5) -> list[dict[str, Any]]:
@@ -168,6 +187,71 @@ def build_business_agent(
         """Search public web information when the business catalog does not answer the question."""
         return search_web(query)
 
+    tools = [search_business_products, search_public_web]
+    memory_config = (
+        get_memory_config(business_id)
+        if audience == "owner" or (memory_opt_in and memory_customer_reference)
+        else None
+    )
+    if memory_config is not None:
+        namespace = memory_namespace(
+            business_id,
+            audience=audience,
+            customer_reference=memory_customer_reference,
+        )
+
+        @tool
+        def search_business_memory(query: str) -> list[str]:
+            """Recall relevant saved context from this authorized memory space."""
+            return recall_memories(memory_config, namespace=namespace, query=query)
+
+        @tool
+        def remember_business_fact(content: str) -> dict[str, str]:
+            """Save a durable, non-sensitive fact only when the user explicitly asks you to remember it."""
+            remember_fact(memory_config, namespace=namespace, content=content)
+            return {"status": "saved"}
+
+        tools.extend([search_business_memory, remember_business_fact])
+    if (
+        audience == "customer"
+        and get_supabase_settings().agentcard_enabled
+        and bool((agent_config or {}).get("permissions", {}).get("create_carts_and_orders"))
+        and bool((agent_config or {}).get("permissions", {}).get("create_paypal_checkout"))
+        and conversation_id is not None
+        and idempotency_key is not None
+        and created_checkout_urls is not None
+    ):
+        @tool
+        def create_agentcard_transaction(
+            items: list[dict[str, Any]],
+        ) -> dict[str, Any]:
+            """Prepare a secure checkout from catalog product IDs and quantities after the customer explicitly agrees to buy. The server validates current prices and stock and calculates the total."""
+            validated_items = [
+                AgentCardItemRequest.model_validate(item)
+                for item in items
+            ]
+            result = create_agentcard_transaction_service(
+                client=client,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                customer_name=customer_name,
+                customer_reference=customer_reference,
+                items=validated_items,
+                idempotency_key=idempotency_key,
+            )
+            checkout_url = result["checkout_url"]
+            created_checkout_urls.append(checkout_url)
+            return {
+                "transaction_id": result["public_transaction_id"],
+                "checkout_url": checkout_url,
+                "amount_minor": result["snapshot"]["total_amount_minor"],
+                "currency": result["snapshot"]["currency"],
+                "expires_at": result["expires_at"],
+                "status": result["status"],
+            }
+
+        tools.append(create_agentcard_transaction)
+
     if settings.openrouter_api_key is None:
         raise RuntimeError("The OpenRouter API key is not configured.")
     model = OpenAIModel(
@@ -175,7 +259,11 @@ def build_business_agent(
             "api_key": settings.openrouter_api_key.get_secret_value(),
             "base_url": "https://openrouter.ai/api/v1",
         },
-        model_id=settings.openrouter_model_id,
+        model_id=(
+            settings.openrouter_vision_model_id
+            if vision_enabled
+            else settings.openrouter_model_id
+        ),
         params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
     )
 
@@ -186,7 +274,7 @@ def build_business_agent(
     )
     return Agent(
         model=model,
-        tools=[search_business_products, search_public_web],
+        tools=tools,
         system_prompt=system_prompt,
         messages=history,
     )
@@ -197,9 +285,14 @@ def invoke_business_agent(
     message: str,
     *,
     audience: str = "owner",
+    images: list[CustomerImage] | None = None,
 ) -> str:
+    prompt: str | list[dict[str, Any]] = message
+    if images:
+        prompt = [{"text": message}]
+        prompt.extend(image.agent_content_block() for image in images)
     result = agent(
-        message,
+        prompt,
         limits=Limits(
             turns=MAX_AGENT_TURNS,
             output_tokens=MAX_AGENT_OUTPUT_TOKENS,

@@ -33,7 +33,7 @@ TOPIC_EVENT_PREFIXES = {
     "conversations": ("conversation.",),
     "owner_assistant": ("owner_assistant.",),
     "approvals": ("approval.",),
-    "orders": ("order.", "payment."),
+    "orders": ("order.", "payment.", "agentcard."),
     "integrations": ("integration.", "catalog."),
     "notifications": ("notification.",),
 }

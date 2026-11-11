@@ -29,8 +29,9 @@ Additional configuration:
 - `CREDENTIALS_ENCRYPTION_KEY` — Fernet key required to store integration
   credentials. Generate one with
   `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-- `ALLOWED_WEB_ORIGINS` — comma-separated exact browser origins for CORS and
-  WebSocket origin checks.
+- `ALLOWED_WEB_ORIGINS` — comma-separated exact browser origins for the Reactant
+  app and authenticated WebSocket origin checks. Website widget origins are
+  registered per business and checked by the public widget routes.
 - `PUBLIC_API_BASE_URL` — public HTTPS backend URL used for provider webhooks,
   such as `https://reactant.onrender.com`.
 - `INVITATION_DELIVERY_URL` and `INVITATION_DELIVERY_TOKEN` — HTTPS invitation
@@ -46,10 +47,20 @@ Additional configuration:
 - `OPENROUTER_MODEL_ID` — optional model ID; defaults to `openrouter/free`.
   OpenRouter chooses an available free model for this router; model
   availability, tool support, and rate limits can vary.
+- `OPENROUTER_VISION_MODEL_ID` — optional vision-capable model for customer
+  image messages; defaults to `google/gemini-2.5-flash`. Vision requests may
+  incur provider charges and require model access.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
-- `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` — backend-only PayPal REST app
-  credentials. Never expose them to the frontend or log them.
+- `PUBLIC_FRONTEND_URL` — HTTPS frontend origin used for customer checkout and
+  for hosting the `reactant-chat.js` website widget installer.
+- `AGENTCARD_ENABLED` — deployment-wide opt-in for agent-originated checkout;
+  defaults to `false`.
+- `PAYPAL_RECEIVING_COUNTRIES` — comma-separated business country allowlist;
+  defaults to `US`.
+- `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are legacy backend settings and
+  are not used by AgentCard. AgentCard uses the encrypted PayPal credentials
+  connected by each business; it never falls back to deployment credentials.
 - `APP_ENV=production` disables the generated OpenAPI and Swagger endpoints.
 
 In development, OpenAPI is available at `/api/v1/openapi.json` and Swagger UI
@@ -60,9 +71,16 @@ at `/api/v1/docs`.
 Review and run, in order,
 [`src/supabase/migrations/0001_core_schema.sql`](src/supabase/migrations/0001_core_schema.sql)
 and
-[`src/supabase/migrations/0002_strands_agent_queue.sql`](src/supabase/migrations/0002_strands_agent_queue.sql)
-manually in the Supabase SQL Editor. Neither has been applied by this project.
-Test them against a non-production Supabase project before production use.
+[`src/supabase/migrations/0002_strands_agent_queue.sql`](src/supabase/migrations/0002_strands_agent_queue.sql),
+then
+[`src/supabase/migrations/0003_agentcard_transactions.sql`](src/supabase/migrations/0003_agentcard_transactions.sql)
+and
+[`src/supabase/migrations/0004_chat_widgets_and_memory.sql`](src/supabase/migrations/0004_chat_widgets_and_memory.sql)
+and
+[`src/supabase/migrations/0005_customer_chat_images.sql`](src/supabase/migrations/0005_customer_chat_images.sql)
+manually in the Supabase SQL Editor. The application does not apply migrations
+automatically. Test them against a non-production Supabase project before
+production use.
 
 Migrations are append-only once shared or run. Never edit a migration that
 someone may have applied; create the next ordered SQL file in
@@ -85,15 +103,22 @@ description of the change and its reason.
   review.
 - Customer replies are durably queued, but their provider-delivery worker is
   not implemented. A `202` response means queued, not delivered.
-- PayPal webhook signature verification is implemented, but PayPal checkout
-  creation, capture/reconciliation, and payment-state transitions are not yet
-  implemented; approval gating is available and the direct checkout path
-  returns `503`.
+- AgentCard supports PayPal Sandbox checkout, customer consent, server-verified
+  capture, signed PayPal webhooks, idempotent partial/full refunds, reconciliation
+  of pending payments, and a durable PDF receipt worker. Receipt delivery is
+  currently available for Telegram conversations; other channels can retrieve
+  an expiring signed receipt URL after generation.
+- AgentCard is disabled until `AGENTCARD_ENABLED=true`, the merchant's own
+  PayPal integration is connected and tested, the business country is
+  allowlisted, and the agent's order/PayPal permissions are enabled. These
+  controls do not establish PayPal live eligibility or AP2 compliance.
 - Telegram credentials are stored encrypted; connection testing calls `getMe`
   and registers `setWebhook`. Inbound normalization and outbound delivery are
   implemented for text/caption messages; the Business Agent replies through the
-  originating Telegram chat. Telegram photo messages are recorded as customer
-  attachments for the conversation.
+  originating Telegram chat. Telegram photos and image documents are validated,
+  normalized, stored in a private bucket, and sent as image inputs to a
+  vision-capable OpenRouter model. Website chat accepts image data URLs through
+  its authenticated widget-session endpoint. WhatsApp remains unimplemented.
 - WooCommerce and Shopify credentials can be tested and their products can be
   imported into the tenant's catalog. Each imported product is scoped by
   `business_id` and provider source.
@@ -107,6 +132,16 @@ description of the change and its reason.
   callback URL `/api/v1/integrations/callback/shopify` in both Shopify and
   Render. Owners enter only their `*.myshopify.com` domain; the access token is
   exchanged and encrypted by the backend.
+- Website chat can be installed from Integrations using the generated script.
+  Register each exact HTTPS origin first; localhost is accepted for local
+  testing. Widget HTTP requests and WebSockets are origin-bound and use signed
+  short-lived session tokens. The reusable app API uses the same session and
+  message endpoints under `/api/v1/public/widgets/`; do not embed business
+  credentials in client apps.
+- Walrus Memory credentials are supplied per business and encrypted at rest.
+  Owner memories use a business-specific namespace; customer memory uses a
+  business- and customer-specific namespace and is available only after
+  explicit customer opt-in. Avoid storing secrets or sensitive personal data.
 - OAuth authorization/callback, provider connection tests/sync, and WhatsApp
   webhook are marked planned and return an explicit unavailable response.
 - `POST /api/v1/businesses/{business_id}/agent/test` invokes OpenRouter; free
@@ -114,6 +149,10 @@ description of the change and its reason.
   admins.
 - Configure all HTTPS origins and secrets before enabling the related
   integration. Do not use a service-role key in user-scoped routes.
+- AgentCard uses the merchant's encrypted PayPal app credentials, USD checkout,
+  a 30-minute checkout expiry, backend-calculated prices, and owner/admin-only
+  refunds. PayPal Sandbox success and external platform approval must be
+  verified before live use.
 - `CREDENTIALS_ENCRYPTION_KEY` is required before creating an integration. Set
   the same Fernet key in local development and Render; changing it makes
   previously stored integration credentials unreadable.
