@@ -57,7 +57,12 @@ PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
 PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true
 AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
-OPENROUTER_API_KEY=<server-only-openrouter-key>
+AGENT_MODEL_PROVIDER=google
+GEMINI_API_KEY=<server-only-google-ai-studio-key>
+GEMINI_MODEL_ID=gemini-2.5-flash
+# Optional OpenRouter alternative:
+# AGENT_MODEL_PROVIDER=openrouter
+# OPENROUTER_API_KEY=<server-only-openrouter-key>
 ```
 
 Generate `CREDENTIALS_ENCRYPTION_KEY` with:
@@ -70,9 +75,9 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 Keep the Fernet key stable: changing it makes existing encrypted integration
 credentials unreadable. `SUPABASE_SECRET_KEY` enables the backend's scoped
 service-role operations and AgentCard worker; never put it in Vercel. The
-Strands worker and OpenRouter key are needed for the agent to create checkouts
-from Telegram or other supported customer conversations. The customer
-checkout itself uses public, token-scoped API routes.
+Strands worker and selected model provider key are needed for the agent to
+create checkouts from Telegram or other supported customer conversations. The
+customer checkout itself uses public, token-scoped API routes.
 
 `PAYPAL_RECEIVING_COUNTRIES` is a comma-separated country allowlist. The
 business profile country must be included. Nigeria (`NG`) is allowed only for
@@ -84,6 +89,13 @@ enabled **Onboard after payment** for Reactant's REST app. This code flag
 doesn't change the PayPal Developer Dashboard setting. For Sandbox, use the
 Sandbox app credentials, BN code, and Sandbox API URL; for production, use the
 Live app credentials, BN code, and Live API URL.
+
+Strands uses Google's native Gemini provider by default. Create a key in
+[Google AI Studio](https://aistudio.google.com/app/apikey) and add it to the
+backend environment as `GEMINI_API_KEY`; keep it off the frontend. Set
+`AGENT_MODEL_PROVIDER=google` and `GEMINI_MODEL_ID=gemini-2.5-flash`. OpenRouter
+remains supported; set `AGENT_MODEL_PROVIDER=openrouter` to use
+`OPENROUTER_API_KEY` instead.
 
 ### Vercel frontend environment
 
@@ -142,18 +154,39 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
 
 ## Run a complete Sandbox purchase
 
-1. From a separate customer Telegram account, ask about the test product.
-2. Express clear purchase intent and confirm the exact item and quantity when
+1. To test payment without calling the AI agent, an owner/admin can request a
+   temporary Sandbox checkout directly:
+
+   ```sh
+   curl --request POST \
+     --url "https://reactant.onrender.com/api/v1/businesses/<BUSINESS_ID>/agentcard/test-checkout" \
+     --header "Authorization: Bearer <OWNER_ACCESS_TOKEN>" \
+     --header "Content-Type: application/json" \
+     --header "Idempotency-Key: sandbox-checkout-001" \
+     --data '{
+       "customer_name": "Sandbox payment test",
+       "items": [{"product_id": "<CATALOG_PRODUCT_UUID>", "quantity": 1}]
+     }'
+   ```
+
+   Use an active catalog product ID. The response includes a `checkout_url`;
+   open it in a browser and complete checkout with a Sandbox buyer account.
+   This endpoint is owner/admin-only, creates a test conversation record, and
+   works only when the backend PayPal API URL is the Sandbox URL. Use a new
+   `Idempotency-Key` for each separate purchase attempt.
+2. To exercise the agent itself, from a separate customer Telegram account,
+   ask about the test product.
+3. Express clear purchase intent and confirm the exact item and quantity when
    the agent asks. The agent must use the backend checkout tool; it must not
    invent or calculate a price itself.
-3. Open the secure checkout URL that the agent sends. Check the merchant,
+4. Open the secure checkout URL that the agent sends. Check the merchant,
    items, quantities, currency, and total.
-4. Explicitly accept the displayed checkout consent. Continue to PayPal and
+5. Explicitly accept the displayed checkout consent. Continue to PayPal and
    sign in with the Sandbox personal buyer account to approve the payment.
-5. Return to the Reactant checkout page. The backend retrieves the PayPal
+6. Return to the Reactant checkout page. The backend retrieves the PayPal
    order and verifies the captured amount/currency before showing payment as
    confirmed. A return redirect by itself is not confirmation.
-6. Confirm the business order is paid and the receipt worker generates a
+7. Confirm the business order is paid and the receipt worker generates a
    receipt. For Telegram, verify receipt delivery in the customer conversation.
 
 An unpaid checkout expires after 30 minutes. Use the same checkout link while
@@ -184,7 +217,8 @@ request with the same idempotency key.
 - **Agent does not offer checkout:** check that PayPal Multiparty access and
   the **Onboard after payment** capability are enabled, and check
   `PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED` and `AGENTCARD_ENABLED`,
-  `STRANDS_AGENT_ENABLED`, `OPENROUTER_API_KEY`, agent permissions, enabled
+  `STRANDS_AGENT_ENABLED`, the selected provider key (`GEMINI_API_KEY` by
+  default, or `OPENROUTER_API_KEY` when selected), agent permissions, enabled
   product, catalog stock, and business country.
 - **PayPal partner app is not configured:** check Render's backend-only
   `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET_KEY`, `PAYPAL_PARTNER_ATTRIBUTION_ID`,

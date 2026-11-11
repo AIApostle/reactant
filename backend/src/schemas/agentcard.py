@@ -29,6 +29,11 @@ class AgentCardItemRequest(RequestModel):
     quantity: int = Field(ge=1, le=10000)
 
 
+class AgentCardManualCheckoutRequest(RequestModel):
+    items: list[AgentCardItemRequest] = Field(min_length=1, max_length=100)
+    customer_name: str = Field(default="Sandbox checkout test", min_length=1, max_length=160)
+
+
 class AgentCardCheckoutItem(RequestModel):
     product_id: UUID
     name: str

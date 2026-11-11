@@ -46,6 +46,7 @@ class OwnerAssistantStatusResponse(RequestModel):
     reason: Literal[
         "ready",
         "disabled",
+        "missing_google_key",
         "missing_openrouter_key",
         "missing_service_key",
     ]

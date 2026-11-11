@@ -45,18 +45,19 @@ Additional configuration:
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.
 - `STRANDS_AGENT_ENABLED=true` — opt in to the Strands background worker,
   owner-assistant runtime, and website chat agent. Requires
-  `SUPABASE_SECRET_KEY` and
-  `OPENROUTER_API_KEY`. Keep disabled until these credentials and the Supabase
+  `SUPABASE_SECRET_KEY` and the selected model provider's API key. Keep
+  disabled until these credentials and the Supabase
   migration are configured.
-- `OPENROUTER_API_KEY` — backend-only OpenRouter API key used by Strands'
-  OpenAI-compatible provider. Do not expose it to the frontend.
-- `openrouter_api_key` is accepted as an equivalent environment variable name.
-- `OPENROUTER_MODEL_ID` — optional model ID; defaults to `openrouter/free`.
-  OpenRouter chooses an available free model for this router; model
-  availability, tool support, and rate limits can vary.
-- `OPENROUTER_VISION_MODEL_ID` — optional vision-capable model for customer
-  image messages; defaults to `google/gemini-2.5-flash`. Vision requests may
-  incur provider charges and require model access.
+- `AGENT_MODEL_PROVIDER` — `google` (default) or `openrouter`.
+- `GEMINI_API_KEY` — backend-only Google AI Studio key for Strands' native
+  Gemini provider. `GOOGLE_API_KEY` is also accepted. Never expose the key to
+  the frontend.
+- `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` — optional Gemini model IDs;
+  both default to `gemini-2.5-flash`.
+- `OPENROUTER_API_KEY` — backend-only OpenRouter key, used only when
+  `AGENT_MODEL_PROVIDER=openrouter`. The OpenRouter provider remains available.
+- `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs
+  for the OpenRouter provider.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
 - `PUBLIC_FRONTEND_URL` — HTTPS frontend origin used for customer checkout and

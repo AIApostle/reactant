@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from storage3.utils import StorageException
 
 from strands import Agent, tool
+from strands.models.gemini import GeminiModel
 from strands.models.openai import OpenAIModel
 from strands.types.agent import Limits
 from supabase import Client
@@ -414,20 +415,27 @@ def build_business_agent(
 
         tools.append(create_agentcard_transaction)
 
-    if settings.openrouter_api_key is None:
-        raise RuntimeError("The OpenRouter API key is not configured.")
-    model = OpenAIModel(
-        client_args={
-            "api_key": settings.openrouter_api_key.get_secret_value(),
-            "base_url": "https://openrouter.ai/api/v1",
-        },
-        model_id=(
-            settings.openrouter_vision_model_id
-            if vision_enabled
-            else settings.openrouter_model_id
-        ),
-        params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
-    )
+    if settings.model_api_key is None:
+        raise RuntimeError(
+            f"{settings.required_api_key_name} is not configured for "
+            f"the {settings.agent_model_provider} agent provider."
+        )
+    model_id = settings.selected_model_id(vision=vision_enabled)
+    if settings.agent_model_provider == "google":
+        model = GeminiModel(
+            client_args={"api_key": settings.model_api_key.get_secret_value()},
+            model_id=model_id,
+            params={"max_output_tokens": MAX_AGENT_OUTPUT_TOKENS},
+        )
+    else:
+        model = OpenAIModel(
+            client_args={
+                "api_key": settings.model_api_key.get_secret_value(),
+                "base_url": "https://openrouter.ai/api/v1",
+            },
+            model_id=model_id,
+            params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
+        )
 
     system_prompt = build_business_system_prompt(
         business=business,

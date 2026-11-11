@@ -53,16 +53,27 @@ def create_realtime_ticket(
     get_business_membership(client, business_id, user.id)
     ticket = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
-    execute(
-        client.table("realtime_tickets").insert(
-            {
-                "token_hash": hashlib.sha256(ticket.encode()).hexdigest(),
-                "business_id": str(business_id),
-                "user_id": str(user.id),
-                "expires_at": expires_at.isoformat(),
-            }
+    try:
+        execute(
+            client.rpc(
+                "create_realtime_ticket",
+                {
+                    "target_business_id": str(business_id),
+                    "requested_token_hash": hashlib.sha256(ticket.encode()).hexdigest(),
+                    "requested_expires_at": expires_at.isoformat(),
+                },
+            )
         )
-    )
+    except HTTPException as error:
+        if error.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "realtime_ticket_database_migration_required",
+                "message": "Realtime ticket creation is not available. Apply the latest Supabase database migrations and retry.",
+            },
+        ) from error
     scheme = "wss" if request.url.scheme == "https" else "ws"
     websocket_url = f"{scheme}://{request.url.netloc}/api/v1/realtime/ws"
     return ResourceEnvelope(

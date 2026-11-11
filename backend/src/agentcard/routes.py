@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+import hashlib
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from supabase import Client
 
+from src.agentcard.service import create_agentcard_transaction
 from src.agentcard.paypal import (
     capture_paypal_order,
     create_paypal_order,
@@ -33,12 +35,17 @@ from src.schemas.agentcard import (
     AgentCardCheckoutResponse,
     AgentCardCheckoutStatus,
     AgentCardConsentRequest,
+    AgentCardManualCheckoutRequest,
     AgentCardPaymentRequest,
     AgentCardPaymentResponse,
     AgentCardRefundRequest,
 )
 from src.schemas.common import ResourceEnvelope
-from src.supabase.client import get_service_supabase_client, get_user_supabase_client
+from src.supabase.client import (
+    get_service_supabase_client,
+    get_supabase_settings,
+    get_user_supabase_client,
+)
 from src.supabase.repository import execute, get_business_membership, require_role
 
 
@@ -46,6 +53,90 @@ router = APIRouter()
 User = Annotated[AuthenticatedUser, Depends(get_current_user)]
 Database = Annotated[Client, Depends(get_user_supabase_client)]
 ServiceDatabase = Annotated[Client, Depends(get_service_supabase_client)]
+MANUAL_CHECKOUT_NAMESPACE = UUID("f0ee6e8a-e3f2-4c5c-b450-f9a2c6e4955f")
+
+
+@router.post(
+    "/businesses/{business_id}/agentcard/test-checkout",
+    response_model=ResourceEnvelope[dict[str, Any]],
+)
+def create_agentcard_test_checkout(
+    business_id: UUID,
+    body: AgentCardManualCheckoutRequest,
+    request: Request,
+    user: User,
+    client: Database,
+    service_client: ServiceDatabase,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> ResourceEnvelope[dict[str, Any]]:
+    membership = get_business_membership(client, business_id, user.id)
+    require_role(membership, {"owner", "admin"})
+    settings = get_supabase_settings()
+    if settings.paypal_api_base_url.rstrip("/") != "https://api-m.sandbox.paypal.com":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "sandbox_checkout_only",
+                "message": "Manual test checkouts are available only when PayPal Sandbox is configured.",
+            },
+        )
+    if idempotency_key is None or not idempotency_key.strip() or len(idempotency_key) > 160:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "idempotency_key_required",
+                "message": "A valid Idempotency-Key header is required.",
+            },
+        )
+
+    normalized_key = f"manual:{user.id}:{idempotency_key.strip()}"
+    conversation_id = uuid5(
+        MANUAL_CHECKOUT_NAMESPACE,
+        f"{business_id}:{user.id}:{idempotency_key.strip()}",
+    )
+    existing_conversation = execute(
+        service_client.table("conversations")
+        .select("id")
+        .eq("business_id", str(business_id))
+        .eq("id", str(conversation_id))
+        .maybe_single()
+    )
+    if not existing_conversation:
+        execute(
+            service_client.table("conversations").insert(
+                {
+                    "id": str(conversation_id),
+                    "business_id": str(business_id),
+                    "channel": "sandbox_test",
+                    "provider_conversation_id": hashlib.sha256(
+                        normalized_key.encode()
+                    ).hexdigest(),
+                    "customer_context": {"source": "owner_sandbox_checkout_test"},
+                }
+            )
+        )
+
+    transaction = create_agentcard_transaction(
+        service_client,
+        business_id=str(business_id),
+        conversation_id=str(conversation_id),
+        customer_name=body.customer_name.strip(),
+        customer_reference=f"sandbox-test:{user.id}",
+        items=body.items,
+        idempotency_key=normalized_key,
+    )
+    snapshot = transaction["snapshot"]
+    return ResourceEnvelope(
+        data={
+            "checkout_url": transaction["checkout_url"],
+            "transaction_id": transaction["public_transaction_id"],
+            "status": transaction["status"],
+            "total_amount_minor": snapshot["total_amount_minor"],
+            "currency": snapshot["currency"],
+            "expires_at": transaction["expires_at"],
+        },
+        request_id=request.state.request_id,
+    )
 
 
 def _transaction_by_checkout(

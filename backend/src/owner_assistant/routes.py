@@ -248,8 +248,12 @@ def get_owner_assistant_status(
     settings = get_agent_runtime_settings()
     if not settings.strands_agent_enabled:
         reason = "disabled"
-    elif settings.openrouter_api_key is None:
-        reason = "missing_openrouter_key"
+    elif settings.model_api_key is None:
+        reason = (
+            "missing_google_key"
+            if settings.agent_model_provider == "google"
+            else "missing_openrouter_key"
+        )
     elif get_supabase_settings().supabase_secret_key is None:
         reason = "missing_service_key"
     else:
@@ -259,7 +263,7 @@ def get_owner_assistant_status(
             provider="strands",
             enabled=settings.strands_agent_enabled,
             available=reason == "ready",
-            model_id=settings.openrouter_model_id if reason == "ready" else None,
+            model_id=settings.selected_model_id() if reason == "ready" else None,
             reason=reason,
         ),
         request_id=request.state.request_id,

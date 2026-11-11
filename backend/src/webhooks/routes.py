@@ -684,7 +684,7 @@ def _process_telegram_update(
         )
         return
     settings = get_agent_runtime_settings()
-    if not settings.strands_agent_enabled or settings.openrouter_api_key is None:
+    if not settings.strands_agent_enabled or settings.model_api_key is None:
         return
     history_rows = execute(
         client.table("customer_messages")

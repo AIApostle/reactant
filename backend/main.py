@@ -66,9 +66,10 @@ async def lifespan(_: FastAPI):
     worker_tasks = []
     runtime_settings = get_agent_runtime_settings()
     if runtime_settings.strands_agent_enabled:
-        if runtime_settings.openrouter_api_key is None:
+        if runtime_settings.model_api_key is None:
             logger.error(
-                "Strands worker is enabled but OPENROUTER_API_KEY is not configured."
+                "Strands worker is enabled but %s is not configured.",
+                runtime_settings.required_api_key_name,
             )
         elif get_supabase_settings().supabase_secret_key is None:
             logger.error(

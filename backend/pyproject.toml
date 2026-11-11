@@ -18,7 +18,7 @@ dependencies = [
     "requests>=2.34.2",
     "supabase>=2.34.0",
     "uvicorn>=0.54.0",
-    "strands-agents[openai]>=1.64.0",
+    "strands-agents[openai,gemini]>=1.64.0",
     "reportlab>=4.4.0",
     "memwal>=0.2.3,<0.3",
 ]

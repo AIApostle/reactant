@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from datetime import datetime, timezone
 from time import sleep
@@ -7,6 +8,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from pydantic import SecretStr
+from strands.models.gemini import GeminiModel
 from strands.models.openai import OpenAIModel
 
 from src.agent import worker as agent_worker
@@ -177,6 +179,22 @@ class OwnerAssistantRoutesTests(unittest.TestCase):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_google_api_key_environment_names_are_supported(self) -> None:
+        for key_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            with self.subTest(key_name=key_name), patch.dict(
+                os.environ,
+                {
+                    "SUPABASE_URL": "https://example.supabase.co",
+                    key_name: "test-google-key",
+                },
+                clear=True,
+            ):
+                settings = AgentRuntimeSettings(_env_file=None)
+
+            self.assertEqual(settings.agent_model_provider, "google")
+            self.assertEqual(settings.model_api_key.get_secret_value(), "test-google-key")
+            self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
+
     def test_system_prompt_contains_business_context_and_safety_rules(self) -> None:
         prompt = build_business_system_prompt(
             business={
@@ -213,7 +231,10 @@ class AgentRuntimeTests(unittest.TestCase):
             agent = build_business_agent(
                 client=ProductClient(),
                 business_id="business-a",
-                settings=AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key")),
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config=None,
                 history=[],
@@ -234,7 +255,10 @@ class AgentRuntimeTests(unittest.TestCase):
             agent = build_business_agent(
                 client=ProductClient(),
                 business_id="business-a",
-                settings=AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key")),
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config=None,
                 history=[],
@@ -319,7 +343,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("product ID", response)
 
     def test_agent_uses_openrouter_free_model_with_configured_api_key(self) -> None:
-        settings = AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key"))
+        settings = AgentRuntimeSettings(
+            agent_model_provider="openrouter",
+            openrouter_api_key=SecretStr("test-key"),
+        )
         agent = build_business_agent(
             client=ProductClient(),
             business_id="business-a",
@@ -337,8 +364,24 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
+    def test_agent_uses_native_gemini_model_by_default(self) -> None:
+        settings = AgentRuntimeSettings(gemini_api_key=SecretStr("test-key"))
+        agent = build_business_agent(
+            client=ProductClient(),
+            business_id="business-a",
+            settings=settings,
+            business={"name": "Store", "country": "US", "currency": "USD"},
+            agent_config=None,
+            history=[],
+        )
+
+        self.assertIsInstance(agent.model, GeminiModel)
+        self.assertEqual(agent.model.config["model_id"], "gemini-2.5-flash")
+        self.assertEqual(agent.model.client_args["api_key"], "test-key")
+
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:
         settings = AgentRuntimeSettings(
+            agent_model_provider="openrouter",
             openrouter_api_key=SecretStr("test-key"),
             openrouter_vision_model_id="test/vision-model",
         )
