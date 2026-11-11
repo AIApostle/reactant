@@ -14,7 +14,6 @@ Provider = Literal[
     "shopify",
     "whatsapp",
     "website_chat",
-    "memwal",
 ]
 
 
@@ -29,11 +28,6 @@ class IntegrationCredentials(RequestModel):
     webhook_secret: str | None = Field(default=None, min_length=1, max_length=4096)
     webhook_id: str | None = Field(default=None, min_length=1, max_length=256)
     allowed_origin: str | None = Field(default=None, min_length=1, max_length=512)
-    account_id: str | None = Field(default=None, min_length=1, max_length=255)
-    private_key: str | None = Field(default=None, min_length=1, max_length=4096)
-    network: Literal["prod", "staging"] | None = None
-
-
 class IntegrationCreate(RequestModel):
     provider: Provider
     credentials: IntegrationCredentials

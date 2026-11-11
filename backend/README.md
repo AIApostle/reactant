@@ -27,6 +27,11 @@ Additional configuration:
 - `SUPABASE_SECRET_KEY` — service-role/secret key, only for backend service
   operations including public website chat and private memory. Never expose it
   to the frontend.
+- `MEMWAL_DELEGATE_KEY` and `MEMWAL_ACCOUNT_ID` — backend-only Walrus Memory
+  credentials. Optionally set `MEMWAL_SERVER_URL` to use a custom relayer; the
+  SDK uses its production relayer by default. Memory is isolated by business
+  and customer namespace. The Python SDK derives the public key from the
+  delegate key, so `MEMWAL_PUBLIC_KEY` is not required.
 - `CREDENTIALS_ENCRYPTION_KEY` — Fernet key required to store integration
   credentials. Generate one with
   `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
@@ -91,6 +96,12 @@ someone may have applied; create the next ordered SQL file in
 `src/supabase/migrations/` for every subsequent schema change, with a short
 description of the change and its reason.
 
+The Render service's local `.env` is not deployed. Set backend-only variables
+in the Render service environment as well. If the Integrations page returns
+503 and backend logs report PostgreSQL code `42703` for
+`integrations.allowed_origin`, apply migration `0006` in the hosted Supabase
+project before retrying.
+
 ## Current integration limits
 
 - Owner-assistant messages are atomically persisted with durable agent runs.
@@ -147,7 +158,8 @@ description of the change and its reason.
 - Website chat accepts up to three customer JPEG, PNG, or WebP images per
   message. It stores private normalized images in Supabase Storage; apply
   migrations `0004` and `0005` before enabling image messages.
-- Walrus Memory credentials are supplied per business and encrypted at rest.
+- Walrus Memory credentials are configured only on the backend and are not
+  stored as per-business integrations.
   Owner memories use a business-specific namespace; customer memory uses a
   business- and customer-specific namespace and is available only after
   explicit customer opt-in. Avoid storing secrets or sensitive personal data.

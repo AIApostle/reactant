@@ -1,4 +1,5 @@
 import base64
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -9,10 +10,22 @@ from postgrest.exceptions import APIError
 from supabase import Client
 
 
+logger = logging.getLogger(__name__)
+
+
 def execute_response(query: Any) -> Any:
     try:
         return query.execute()
     except APIError as error:
+        logger.error("Database request failed postgres_code=%s", error.code)
+        if error.code in {"42703", "PGRST204", "PGRST205"}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "database_schema_outdated",
+                    "message": "The workspace database schema is out of date. Apply the latest Supabase migrations and retry.",
+                },
+            ) from error
         if error.code == "23505":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

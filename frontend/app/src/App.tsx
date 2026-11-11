@@ -13,7 +13,8 @@ import {
   Clock,
   CreditCard,
   DotsThree,
-  Funnel,
+  Eye,
+  EyeSlash,
   GearSix,
   House,
   ImageSquare,
@@ -96,8 +97,9 @@ const reactantGridTheme = themeQuartz.withParams({
 })
 
 type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings'
-type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal' | 'Website chat' | 'Walrus Memory'
+type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal' | 'Website chat'
 type ConversationStatus = 'Needs reply' | 'Open' | 'Resolved'
+type ConversationFilter = 'All' | 'Needs reply'
 
 type Conversation = {
   id: string
@@ -331,7 +333,7 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('')
   const [reply, setReply] = useState('')
   const [toast, setToast] = useState('')
-  const [conversationFilter, setConversationFilter] = useState<'All' | ConversationStatus>('All')
+  const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('All')
   const [orderFilter, setOrderFilter] = useState('All orders')
 
   useEffect(() => {
@@ -347,7 +349,6 @@ function App() {
     Telegram: integrations.some((item) => item.provider === 'telegram' && item.status === 'connected'),
     PayPal: integrations.some((item) => item.provider === 'paypal' && item.status === 'connected'),
     'Website chat': integrations.some((item) => item.provider === 'website_chat' && item.status === 'connected'),
-    'Walrus Memory': integrations.some((item) => item.provider === 'memwal' && item.status === 'connected'),
   }
 
   useEffect(() => {
@@ -469,6 +470,7 @@ function App() {
       try {
         const ticket = await apiRequest<{ ticket: string; websocket_url: string }>(
           businessPath(businessId, '/realtime-ticket'),
+          { method: 'POST' },
         )
         if (!active) return
         socket = new WebSocket(ticket.websocket_url, `reactant-ticket.${ticket.ticket}`)
@@ -1378,9 +1380,12 @@ function Catalog({
       minWidth: 210,
       cellRenderer: ({ data }: ICellRendererParams<CatalogProduct>) => data ? (
         <span className="catalog-grid-product">
-          {data.images[0]
-            ? <img src={data.images[0]} alt="" loading="lazy" />
-            : <span className="catalog-grid-image-placeholder"><ImageSquare size={18} /></span>}
+          <span className="catalog-grid-image-wrap">
+            {data.images[0]
+              ? <img src={data.images[0]} alt={`${data.name} product`} loading="lazy" />
+              : <span className="catalog-grid-image-placeholder" role="img" aria-label="No product photo"><ImageSquare size={18} /></span>}
+            {data.images.length > 1 && <small className="catalog-grid-image-count">+{data.images.length - 1}</small>}
+          </span>
           <span><strong>{data.name}</strong><small>{data.description || 'No description'}</small></span>
         </span>
       ) : null,
@@ -1451,15 +1456,6 @@ function Catalog({
         description="Add products and photos for your agent to use in customer conversations. This is not an online store."
         action={<Button onClick={() => openProductForm()}><Plus size={17} /> Add product</Button>}
       />
-
-      <section className="catalog-intro panel">
-        <div className="catalog-intro-icon"><ImageSquare size={23} /></div>
-        <div className="catalog-intro-copy">
-          <h2>Sell through chat? Start here.</h2>
-          <p>Upload the products you share on WhatsApp, Instagram, or in messages. Add prices and useful details once, then let your agent find the right product and share its photos with customers.</p>
-        </div>
-        <div className="catalog-intro-note"><Robot size={16} /><span>Only products you share with the agent are available to it.</span></div>
-      </section>
 
       <div className="catalog-toolbar">
         <div className="catalog-count"><strong>{products.length}</strong><span>{products.length === 1 ? 'product' : 'products'}</span></div>
@@ -1633,8 +1629,8 @@ function Inbox({
   conversations: Conversation[]
   allConversations: Conversation[]
   selectedConversation?: Conversation
-  filter: 'All' | ConversationStatus
-  setFilter: (filter: 'All' | ConversationStatus) => void
+  filter: ConversationFilter
+  setFilter: (filter: ConversationFilter) => void
   setSearch: (value: string) => void
   search: string
   setSelected: (id: string) => void
@@ -1646,8 +1642,6 @@ function Inbox({
   const filterOptions = [
     { label: 'All', count: allConversations.length },
     { label: 'Needs reply', count: allConversations.filter((conversation) => conversation.status === 'Needs reply').length },
-    { label: 'Open', count: allConversations.filter((conversation) => conversation.status === 'Open').length },
-    { label: 'Resolved', count: allConversations.filter((conversation) => conversation.status === 'Resolved').length },
   ] as const
   const conversationColumns = useMemo<ColDef<Conversation>[]>(() => [
     {
@@ -1683,7 +1677,6 @@ function Inbox({
             <TextField.Root placeholder="Search conversations" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search conversations">
               <TextField.Slot><MagnifyingGlass size={16} /></TextField.Slot>
             </TextField.Root>
-            <Button variant="soft" color="gray" aria-label={filter === 'All' ? 'Show conversations needing a reply' : 'Show all conversations'} onClick={() => setFilter(filter === 'All' ? 'Needs reply' : 'All')}><Funnel size={16} /></Button>
           </div>
           <div className="inbox-filters" role="tablist" aria-label="Filter conversations">
             {filterOptions.map(({ label, count }) => (
@@ -1814,13 +1807,23 @@ function Orders({
       ) : null,
     },
   ], [selectOrder])
+  const orderFilters = [
+    { label: 'All orders', count: orders.length },
+    { label: 'Pending payment', count: orders.filter((order) => order.status === 'Pending payment').length },
+    { label: 'Processing', count: orders.filter((order) => order.status === 'Processing').length },
+    { label: 'Paid', count: orders.filter((order) => order.status === 'Paid').length },
+  ]
   return (
     <div className="page-body orders-page">
       <PageHeading title="Orders" description="Track orders and payment status in one place." />
       <section className="panel orders-table-panel">
         <div className="table-toolbar">
           <div className="order-tabs" role="tablist" aria-label="Filter orders">
-            {['All orders', 'Pending payment', 'Processing', 'Paid'].map((item) => <button key={item} className={`order-tab ${filter === item ? 'order-tab-active' : ''}`} onClick={() => setFilter(item)} role="tab" aria-selected={filter === item}>{item}</button>)}
+            {orderFilters.map(({ label, count }) => (
+              <button key={label} className={`order-tab ${filter === label ? 'order-tab-active' : ''}`} onClick={() => setFilter(label)} role="tab" aria-selected={filter === label}>
+                <span>{label}</span><small className="order-tab-count">{count}</small>
+              </button>
+            ))}
           </div>
           <div className="table-tools">
             <TextField.Root placeholder="Search orders" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search orders"><TextField.Slot><MagnifyingGlass size={15} /></TextField.Slot></TextField.Root>
@@ -1928,7 +1931,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     { provider: 'Telegram', key: 'telegram', description: 'Receive customer messages through your Telegram bot.', icon: TelegramLogo, category: 'Messaging' },
     { provider: 'PayPal', key: 'paypal', description: 'Create customer checkout sessions and verify payments.', icon: CreditCard, category: 'Payments' },
     { provider: 'Website chat', key: 'website_chat', description: 'Add a floating customer-support chat to your website or web app.', icon: ChatCircleDots, category: 'Messaging' },
-    { provider: 'Walrus Memory', key: 'memwal', description: 'Give the agent private, tenant-scoped long-term memory.', icon: Robot, category: 'Memory' },
   ]
   const websiteConnections = integrations.filter((item) => item.provider === 'website_chat' && item.status !== 'disconnected')
 
@@ -1985,12 +1987,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     }
     const credentials = dialogProvider === 'Website chat'
       ? { allowed_origin: String(formData.get('allowed_origin') ?? '').trim() }
-      : dialogProvider === 'Walrus Memory'
-        ? {
-            account_id: String(formData.get('memwal_account_id') ?? '').trim(),
-            private_key: String(formData.get('memwal_private_key') ?? ''),
-            network: String(formData.get('memwal_network') ?? 'prod'),
-          }
       : dialogProvider === 'WooCommerce'
       ? {
           store_url: String(formData.get('store_url') ?? '').trim(),
@@ -2013,9 +2009,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
         body: JSON.stringify({
           provider: dialogProvider === 'Website chat'
             ? 'website_chat'
-            : dialogProvider === 'Walrus Memory'
-              ? 'memwal'
-              : dialogProvider.toLowerCase(),
+            : dialogProvider.toLowerCase(),
           credentials,
         }),
       })
@@ -2025,13 +2019,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       if (created.provider === 'website_chat') {
         await loadWebsiteInstall(created.id)
         notify('Website chat is ready to install.')
-      } else if (created.provider === 'memwal') {
-        const connected = await apiRequest<Integration>(
-          businessPath(businessId, `/integrations/${created.id}/test`),
-          { method: 'POST' },
-        )
-        setIntegrations((items) => items.map((item) => item.id === connected.id ? connected : item))
-        notify('Walrus Memory connected.')
       } else if (created.provider === 'telegram') {
         void testConnection(created)
       } else if (created.provider === 'woocommerce') {
@@ -2219,8 +2206,6 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
               : dialogProvider === 'Website chat'
                 ? 'Register the exact site origin. Use HTTPS in production; localhost is accepted for local testing.'
-                : dialogProvider === 'Walrus Memory'
-                  ? 'Connect your Walrus Memory account. Memory is isolated by business and customer, and customer memories are only used after opt-in.'
                   : 'Use the REST app credentials and webhook ID from PayPal. Reactant uses these only to create checkout sessions and verify customer payments.'}
           </Dialog.Description>
           <form className="connection-form" onSubmit={(event) => void createConnection(event)}>
@@ -2230,27 +2215,14 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 <TextField.Root id="connection-website-origin" name="allowed_origin" type="url" placeholder="https://shop.example.com" pattern="https://.*|http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?" required />
                 <p className="form-note">Enter only the site origin, without a path. You can add another custom domain later. The origin is checked on every chat request.</p>
               </>
-            ) : dialogProvider === 'Walrus Memory' ? (
-              <>
-                <label className="field-label" htmlFor="memwal-account-id">Walrus Memory account ID</label>
-                <TextField.Root id="memwal-account-id" name="memwal_account_id" autoComplete="off" required />
-                <label className="field-label" htmlFor="memwal-private-key">Delegate private key</label>
-                <TextField.Root id="memwal-private-key" name="memwal_private_key" type="password" autoComplete="off" required />
-                <label className="field-label" htmlFor="memwal-network">Network</label>
-                <select id="memwal-network" name="memwal_network" className="connection-select" defaultValue="prod">
-                  <option value="prod">Production</option>
-                  <option value="staging">Staging</option>
-                </select>
-                <p className="form-note">Credentials are encrypted at rest. The agent stores durable owner facts and only customer preferences after explicit consent.</p>
-              </>
             ) : dialogProvider === 'WooCommerce' ? (
               <>
                 <label className="field-label" htmlFor="connection-store-url">Store URL</label>
                 <TextField.Root id="connection-store-url" name="store_url" type="url" placeholder="https://yourstore.com" pattern="https://.*" required />
                 <label className="field-label" htmlFor="connection-consumer-key">REST API consumer key</label>
-                <TextField.Root id="connection-consumer-key" name="consumer_key" type="password" autoComplete="off" required />
+                <SecretTextField id="connection-consumer-key" name="consumer_key" label="REST API consumer key" />
                 <label className="field-label" htmlFor="connection-consumer-secret">REST API consumer secret</label>
-                <TextField.Root id="connection-consumer-secret" name="consumer_secret" type="password" autoComplete="off" required />
+                <SecretTextField id="connection-consumer-secret" name="consumer_secret" label="REST API consumer secret" />
                 <p className="form-note">Create the keys in WooCommerce under Settings, Advanced, REST API. Credentials are sent only to Reactant over HTTPS.</p>
               </>
             ) : dialogProvider === 'Shopify' ? (
@@ -2262,17 +2234,17 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
             ) : dialogProvider === 'Telegram' ? (
               <>
                 <label className="field-label" htmlFor="connection-bot-token">Telegram bot token</label>
-                <TextField.Root id="connection-bot-token" name="bot_token" type="password" autoComplete="off" required />
+                <SecretTextField id="connection-bot-token" name="bot_token" label="Telegram bot token" />
                 <p className="form-note">Create a bot with @BotFather. Reactant configures the webhook; never share this token with customers.</p>
               </>
             ) : (
               <>
                 <label className="field-label" htmlFor="paypal-client-id">PayPal REST app client ID</label>
-                <TextField.Root id="paypal-client-id" name="paypal_client_id" type="password" autoComplete="off" required />
+                <SecretTextField id="paypal-client-id" name="paypal_client_id" label="PayPal REST app client ID" />
                 <label className="field-label" htmlFor="paypal-client-secret">PayPal REST app secret</label>
-                <TextField.Root id="paypal-client-secret" name="paypal_client_secret" type="password" autoComplete="off" required />
+                <SecretTextField id="paypal-client-secret" name="paypal_client_secret" label="PayPal REST app secret" />
                 <label className="field-label" htmlFor="paypal-webhook-id">PayPal webhook ID</label>
-                <TextField.Root id="paypal-webhook-id" name="paypal_webhook_id" autoComplete="off" required />
+                <SecretTextField id="paypal-webhook-id" name="paypal_webhook_id" label="PayPal webhook ID" />
                 <p className="form-note">Create an app and webhook in PayPal Developer. Reactant never receives permission to access your balance or move funds.</p>
               </>
             )}
@@ -2581,25 +2553,33 @@ function OwnerAssistant({ businessId, notify, decideApproval, approvals }: { bus
         </div>
         <form className="owner-message-composer" onSubmit={(event) => void sendOwnerMessage(event)}>
           <label className="sr-only" htmlFor="owner-agent-message">Message your business agent</label>
-          <textarea
-            id="owner-agent-message"
-            rows={3}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                event.currentTarget.form?.requestSubmit()
-              }
-            }}
-            placeholder={runtimeStatus === 'ready' ? 'Ask your Business Agent anything...' : 'Your agent is unavailable. Set it up to continue.'}
-            disabled={runtimeStatus !== 'ready' || sending}
-            aria-describedby="owner-composer-help"
-          />
-          <div className="owner-composer-footer">
-            <small id="owner-composer-help">Enter to send · Shift+Enter for a new line · Private to this workspace.</small>
-            <Button type="submit" disabled={!draft.trim() || sending || runtimeStatus !== 'ready'}><PaperPlaneTilt size={16} /> {sending ? 'Sending...' : 'Send message'}</Button>
+          <div className="owner-composer-input-shell">
+            <textarea
+              id="owner-agent-message"
+              rows={3}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+              placeholder={runtimeStatus === 'ready' ? 'Ask your Business Agent anything...' : 'Your agent is unavailable. Set it up to continue.'}
+              disabled={runtimeStatus !== 'ready' || sending}
+              aria-describedby="owner-composer-help"
+            />
+            <Button
+              className="owner-composer-send"
+              type="submit"
+              disabled={!draft.trim() || sending || runtimeStatus !== 'ready'}
+              aria-label={sending ? 'Sending message' : 'Send message'}
+              title={sending ? 'Sending message' : 'Send message'}
+            >
+              <PaperPlaneTilt size={17} />
+            </Button>
           </div>
+          <small id="owner-composer-help" className="owner-composer-help">Enter to send · Shift+Enter for a new line · Private to this workspace.</small>
         </form>
       </section>
     </div>
@@ -2617,6 +2597,25 @@ function PermissionRow({ title, description, enabled, checked, onChange, disable
 
 function Avatar({ initials, color, small }: { initials: string; color: string; small?: boolean }) {
   return <span className={`avatar avatar-${color} ${small ? 'avatar-small' : ''}`}>{initials}</span>
+}
+
+function SecretTextField({ id, name, label }: { id: string; name: string; label: string }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <TextField.Root id={id} name={name} type={visible ? 'text' : 'password'} autoComplete="off" required>
+      <TextField.Slot side="right">
+        <button
+          className="secret-field-toggle"
+          type="button"
+          aria-label={visible ? `Hide ${label}` : `Show ${label}`}
+          aria-pressed={visible}
+          onClick={() => setVisible((current) => !current)}
+        >
+          {visible ? <EyeSlash size={16} /> : <Eye size={16} />}
+        </button>
+      </TextField.Slot>
+    </TextField.Root>
+  )
 }
 
 function colorForInitials(initials: string) {

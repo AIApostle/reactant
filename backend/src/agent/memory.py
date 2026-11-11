@@ -1,16 +1,11 @@
 import hashlib
-import json
 import logging
 from dataclasses import dataclass
-from typing import Any
 from uuid import UUID
 
-from cryptography.fernet import Fernet, InvalidToken
-from fastapi import HTTPException
 from memwal import MemWalError, MemWalSync, RecallParams
 
-from src.supabase.client import get_service_supabase_client, get_supabase_settings
-from src.supabase.repository import execute
+from src.supabase.client import get_supabase_settings
 
 
 logger = logging.getLogger(__name__)
@@ -20,7 +15,7 @@ logger = logging.getLogger(__name__)
 class MemoryConfig:
     private_key: str
     account_id: str
-    network: str
+    server_url: str | None
 
 
 def memory_namespace(
@@ -39,49 +34,15 @@ def memory_namespace(
     return f"reactant-business-{business_id}-customer-{reference_hash}"
 
 
-def get_memory_config(business_id: str) -> MemoryConfig | None:
-    try:
-        client = get_service_supabase_client()
-        integration = execute(
-            client.table("integrations")
-            .select("credentials_ciphertext")
-            .eq("business_id", business_id)
-            .eq("provider", "memwal")
-            .eq("status", "connected")
-            .limit(1)
-        )
-    except HTTPException as error:
-        logger.warning(
-            "MemWal configuration unavailable business_id=%s code=%s",
-            business_id,
-            getattr(error.detail, "code", "service_database_unavailable"),
-        )
+def get_memory_config(_business_id: str) -> MemoryConfig | None:
+    settings = get_supabase_settings()
+    if settings.memwal_delegate_key is None or not settings.memwal_account_id:
         return None
-    if not integration:
-        return None
-
-    encrypted = integration[0].get("credentials_ciphertext")
-    key = get_supabase_settings().credentials_encryption_key
-    if not isinstance(encrypted, str) or key is None:
-        logger.error("MemWal credentials cannot be read business_id=%s", business_id)
-        return None
-    try:
-        values: Any = json.loads(
-            Fernet(key.get_secret_value().encode()).decrypt(encrypted.encode())
-        )
-    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
-        logger.error("MemWal credentials could not be decrypted business_id=%s", business_id)
-        return None
-    if not isinstance(values, dict):
-        logger.error("MemWal credentials are malformed business_id=%s", business_id)
-        return None
-    private_key = values.get("private_key")
-    account_id = values.get("account_id")
-    network = values.get("network")
-    if not all(isinstance(value, str) and value for value in (private_key, account_id, network)):
-        logger.error("MemWal credentials are incomplete business_id=%s", business_id)
-        return None
-    return MemoryConfig(private_key=private_key, account_id=account_id, network=network)
+    return MemoryConfig(
+        private_key=settings.memwal_delegate_key.get_secret_value(),
+        account_id=settings.memwal_account_id,
+        server_url=settings.memwal_server_url or None,
+    )
 
 
 def recall_memories(
@@ -96,7 +57,7 @@ def recall_memories(
         memory = MemWalSync.create(
             key=config.private_key,
             account_id=config.account_id,
-            env=config.network,
+            server_url=config.server_url,
         )
         result = memory.recall(
             RecallParams(query=query[:500], limit=max(1, min(limit, 5)), namespace=namespace)
@@ -121,7 +82,7 @@ def remember_fact(
         memory = MemWalSync.create(
             key=config.private_key,
             account_id=config.account_id,
-            env=config.network,
+            server_url=config.server_url,
         )
         memory.remember_and_wait(content[:2000], namespace=namespace)
     except (MemWalError, OSError, ValueError) as error:

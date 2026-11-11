@@ -1163,17 +1163,43 @@
   gap: 10px;
 }
 
-.catalog-grid-product img,
-.catalog-grid-image-placeholder {
+.catalog-grid-image-wrap {
+  position: relative;
   display: grid;
-  width: 46px;
-  height: 46px;
+  width: 52px;
+  height: 52px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 7px;
+  overflow: hidden;
+  border: 1px solid #e6ebe6;
+  border-radius: 9px;
+  background: #f0f3f0;
+}
+
+.catalog-grid-image-wrap img,
+.catalog-grid-image-placeholder {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
   color: #78877c;
   background: #f0f3f0;
   object-fit: cover;
+}
+
+.catalog-grid-image-count {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  min-width: 17px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  color: #fff;
+  background: rgb(38 51 42 / 78%);
+  font-size: 8px;
+  line-height: 1.2;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .catalog-grid-product > span:last-child {
@@ -1524,35 +1550,65 @@
 .order-tabs {
   display: flex;
   min-width: 0;
-  gap: 12px;
+  align-items: center;
+  gap: 4px;
   overflow-x: auto;
+  padding: 4px;
+  border-radius: 10px;
+  background: #f4f6f4;
 }
 
 .order-tab {
-  position: relative;
-  min-height: 38px;
-  padding: 0 2px;
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: #79847c;
   background: transparent;
   font-size: 10px;
   white-space: nowrap;
   cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.order-tab:hover {
+  color: #286d49;
+  background: #fff;
+}
+
+.order-tab:focus-visible {
+  outline: 2px solid #287b52;
+  outline-offset: 2px;
 }
 
 .order-tab-active {
+  border-color: #e4e9e4;
   color: #286d49;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(34 54 38 / 6%);
   font-weight: 650;
 }
 
-.order-tab-active::after {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: #398158;
-  content: "";
+.order-tab-count {
+  display: grid;
+  min-width: 19px;
+  height: 19px;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: #738077;
+  background: #edf0ed;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-tab-active .order-tab-count {
+  color: #286d49;
+  background: #e6f0e7;
 }
 
 .table-tools {
@@ -3032,7 +3088,7 @@
 
   .order-tabs {
     width: 100%;
-    gap: 12px;
+    gap: 4px;
   }
 
   .table-tools {
@@ -3241,6 +3297,30 @@
 
 .integration-error-text {
   color: #a13d31 !important;
+}
+
+.secret-field-toggle {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #758178;
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.secret-field-toggle:hover {
+  color: #286d49;
+  background: #edf4ee;
+}
+
+.secret-field-toggle:focus-visible {
+  outline: 2px solid #287b52;
+  outline-offset: 1px;
 }
 
 .owner-channel-notice {
@@ -3483,27 +3563,32 @@
 
 .owner-message-composer {
   display: grid;
-  gap: 9px;
+  gap: 7px;
   padding: 13px 16px 15px;
   border-top: 1px solid #edf0ed;
 }
 
-.owner-message-composer textarea {
-  width: 100%;
-  min-height: 72px;
-  resize: vertical;
-  padding: 10px 11px;
-  border: 1px solid #dfe5df;
-  border-radius: 8px;
-  color: #34443a;
-  background: #fff;
-  font-size: 11px;
-  line-height: 1.5;
-  outline: none;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+.owner-composer-input-shell {
+  position: relative;
 }
 
-.owner-message-composer textarea:focus {
+.owner-message-composer textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+  padding: 12px 54px 12px 13px;
+  border: 1px solid #dfe5df;
+  border-radius: 13px;
+  color: #34443a;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.owner-composer-input-shell:focus-within textarea {
   border-color: #74a47d;
   box-shadow: 0 0 0 3px rgb(76 132 88 / 12%);
 }
@@ -3513,23 +3598,28 @@
   background: #f7f9f7;
 }
 
-.owner-composer-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.owner-composer-send.rt-Button {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  place-items: center;
+  padding: 0;
+  border-radius: 9px;
 }
 
-.owner-composer-footer small {
+.owner-composer-send.rt-Button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.owner-composer-help {
+  padding-left: 2px;
   color: #7e8a81;
   font-size: 9px;
   line-height: 1.4;
-}
-
-.owner-composer-footer .rt-Button {
-  min-height: 32px;
-  flex: 0 0 auto;
-  font-size: 9px;
 }
 
 @media (max-width: 600px) {
@@ -3575,9 +3665,6 @@
     padding-left: 11px;
   }
 
-  .owner-composer-footer {
-    align-items: flex-end;
-  }
 }
 
 .catalog-page {
@@ -3590,17 +3677,6 @@
   margin-bottom: 0;
 }
 
-.catalog-intro {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 12px;
-  padding: 18px 20px;
-  border-color: #e1e9e1;
-  background: #f5f9f5;
-}
-
-.catalog-intro-icon,
 .catalog-empty-icon {
   display: grid;
   width: 42px;
@@ -3611,7 +3687,6 @@
   background: #e5f0e6;
 }
 
-.catalog-intro-copy h2,
 .catalog-empty h2 {
   margin: 0;
   color: #2e3b32;
@@ -3620,22 +3695,12 @@
   letter-spacing: -0.2px;
 }
 
-.catalog-intro-copy p,
 .catalog-empty p {
   max-width: 740px;
   margin: 5px 0 0;
   color: #6d7a70;
   font-size: 11px;
   line-height: 1.6;
-}
-
-.catalog-intro-note {
-  display: flex;
-  grid-column: 2;
-  align-items: center;
-  gap: 7px;
-  color: #55705c;
-  font-size: 10px;
 }
 
 .catalog-toolbar {
@@ -4143,28 +4208,6 @@
 @media (max-width: 720px) {
   .catalog-page {
     gap: 14px;
-  }
-
-  .catalog-intro {
-    gap: 10px;
-    padding: 14px;
-  }
-
-  .catalog-intro-icon {
-    width: 35px;
-    height: 35px;
-  }
-
-  .catalog-intro-copy h2 {
-    font-size: 12px;
-  }
-
-  .catalog-intro-copy p {
-    font-size: 10px;
-  }
-
-  .catalog-intro-note {
-    font-size: 9px;
   }
 
   .catalog-toolbar {

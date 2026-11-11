@@ -205,14 +205,15 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("even when the customer did not explicitly", customer_prompt)
 
     def test_agent_has_only_the_scoped_catalog_tool(self) -> None:
-        agent = build_business_agent(
-            client=ProductClient(),
-            business_id="business-a",
-            settings=AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key")),
-            business={"name": "Store", "country": "US", "currency": "USD"},
-            agent_config=None,
-            history=[],
-        )
+        with patch("src.agent.runtime.get_memory_config", return_value=None):
+            agent = build_business_agent(
+                client=ProductClient(),
+                business_id="business-a",
+                settings=AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key")),
+                business={"name": "Store", "country": "US", "currency": "USD"},
+                agent_config=None,
+                history=[],
+            )
         self.assertEqual(
             sorted(agent.tool_registry.registry.keys()),
             ["search_business_products", "search_public_web"],

@@ -147,12 +147,6 @@ def _validate_provider_credentials(body: IntegrationCreate) -> dict[str, str]:
         default_port = 443 if parsed.scheme == "https" else 80
         netloc = hostname if port is None or port == default_port else f"{hostname}:{port}"
         credentials["allowed_origin"] = f"{parsed.scheme}://{netloc}"
-    elif body.provider == "memwal":
-        if not credentials.get("account_id") or not credentials.get("private_key") or not credentials.get("network"):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"code": "validation_error", "message": "Walrus Memory account ID, delegate private key, and network are required."},
-            )
     else:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -317,7 +311,6 @@ def create_integration(
                     "telegram": "messaging",
                     "paypal": "payments",
                     "website_chat": "messaging",
-                    "memwal": "memory",
                 }[body.provider],
                 "status": "connected" if body.provider == "website_chat" else "pending",
                 "credentials_ciphertext": ciphertext,
@@ -498,7 +491,7 @@ def test_integration(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "not_found", "message": "The requested resource was not found."},
         )
-    if integration["provider"] not in {"telegram", "woocommerce", "shopify", "paypal", "memwal", "website_chat"}:
+    if integration["provider"] not in {"telegram", "woocommerce", "shopify", "paypal", "website_chat"}:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail={"code": "provider_adapter_unavailable", "message": "Testing this provider is not configured."},
@@ -550,29 +543,14 @@ def test_integration(
             ) from error
     elif integration["provider"] == "website_chat":
         pass
-    elif integration["provider"] == "memwal":
-        from memwal import MemWalSync
-
-        try:
-            memory = MemWalSync.create(
-                key=credentials["private_key"],
-                account_id=credentials["account_id"],
-                env=credentials["network"],
-            )
-            health = memory.health()
-            if not health:
-                raise RuntimeError("Walrus Memory health check failed.")
-        except (KeyError, OSError, RuntimeError, ValueError) as error:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"code": "memwal_unavailable", "message": "Walrus Memory could not verify these credentials."},
-            ) from error
-        finally:
-            if "memory" in locals():
-                memory.close(clear_keys=True)
-    else:
+    elif integration["provider"] == "telegram":
         return _test_telegram_integration(
             business_id, integration_id, request, integration, credentials, client
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail={"code": "provider_not_supported", "message": "This provider is not available yet."},
         )
     now = datetime.now(timezone.utc).isoformat()
     updated = execute(
