@@ -53,7 +53,8 @@ Additional configuration:
   Gemini provider. `GOOGLE_API_KEY` is also accepted. Never expose the key to
   the frontend.
 - `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` — optional Gemini model IDs;
-  both default to `gemini-3.8-flash`.
+  both default to the stable `gemini-3.6-flash` model. Older 2.5 Flash and
+  3.8 Flash values are normalized to 3.6 Flash.
 - `OPENROUTER_API_KEY` — backend-only OpenRouter key, used only when
   `AGENT_MODEL_PROVIDER=openrouter`. The OpenRouter provider remains available.
 - `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs

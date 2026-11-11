@@ -198,11 +198,11 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_retired_gemini_model_setting_is_upgraded(self) -> None:
         settings = AgentRuntimeSettings(
             gemini_model_id="gemini-2.5-flash",
-            gemini_vision_model_id="models/gemini-2.5-flash",
+            gemini_vision_model_id="gemini-3.8-flash",
         )
 
-        self.assertEqual(settings.selected_model_id(), "gemini-3.8-flash")
-        self.assertEqual(settings.selected_model_id(vision=True), "gemini-3.8-flash")
+        self.assertEqual(settings.selected_model_id(), "gemini-3.6-flash")
+        self.assertEqual(settings.selected_model_id(vision=True), "gemini-3.6-flash")
 
     def test_system_prompt_contains_business_context_and_safety_rules(self) -> None:
         prompt = build_business_system_prompt(
@@ -385,7 +385,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.6-flash")
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:

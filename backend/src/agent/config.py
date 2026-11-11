@@ -19,8 +19,8 @@ class AgentRuntimeSettings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
-    gemini_model_id: str = "gemini-3.8-flash"
-    gemini_vision_model_id: str = "gemini-3.8-flash"
+    gemini_model_id: str = "gemini-3.6-flash"
+    gemini_vision_model_id: str = "gemini-3.6-flash"
     openrouter_api_key: SecretStr | None = None
     openrouter_model_id: str = "openrouter/free"
     openrouter_vision_model_id: str = "google/gemini-2.5-flash"
@@ -29,8 +29,12 @@ class AgentRuntimeSettings(BaseSettings):
     @field_validator("gemini_model_id", "gemini_vision_model_id", mode="before")
     @classmethod
     def replace_retired_gemini_model(cls, value: str) -> str:
-        if value in {"gemini-2.5-flash", "models/gemini-2.5-flash"}:
-            return "gemini-3.8-flash"
+        if value in {
+            "gemini-2.5-flash",
+            "models/gemini-2.5-flash",
+            "gemini-3.8-flash",
+        }:
+            return "gemini-3.6-flash"
         return value
 
     @property

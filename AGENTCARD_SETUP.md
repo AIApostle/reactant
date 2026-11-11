@@ -59,7 +59,7 @@ AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
 AGENT_MODEL_PROVIDER=google
 GEMINI_API_KEY=<server-only-google-ai-studio-key>
-GEMINI_MODEL_ID=gemini-3.8-flash
+GEMINI_MODEL_ID=gemini-3.6-flash
 # Optional OpenRouter alternative:
 # AGENT_MODEL_PROVIDER=openrouter
 # OPENROUTER_API_KEY=<server-only-openrouter-key>
@@ -93,9 +93,13 @@ Live app credentials, BN code, and Live API URL.
 Strands uses Google's native Gemini provider by default. Create a key in
 [Google AI Studio](https://aistudio.google.com/app/apikey) and add it to the
 backend environment as `GEMINI_API_KEY`; keep it off the frontend. Set
-`AGENT_MODEL_PROVIDER=google` and `GEMINI_MODEL_ID=gemini-3.8-flash`. OpenRouter
+`AGENT_MODEL_PROVIDER=google` and `GEMINI_MODEL_ID=gemini-3.6-flash`. OpenRouter
 remains supported; set `AGENT_MODEL_PROVIDER=openrouter` to use
 `OPENROUTER_API_KEY` instead.
+
+The Gemini model can temporarily return `503 UNAVAILABLE` during capacity
+spikes. The default is the stable Gemini 3.6 Flash model; if Render has an
+explicit `GEMINI_MODEL_ID`, set it to `gemini-3.6-flash` as well.
 
 ### Vercel frontend environment
 
