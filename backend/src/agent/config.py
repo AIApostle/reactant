@@ -46,6 +46,10 @@ class AgentRuntimeSettings(BaseSettings):
         )
 
     @property
+    def has_model_api_key(self) -> bool:
+        return self.gemini_api_key is not None or self.openrouter_api_key is not None
+
+    @property
     def required_api_key_name(self) -> str:
         return (
             "GEMINI_API_KEY"

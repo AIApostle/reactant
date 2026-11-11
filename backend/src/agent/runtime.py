@@ -1,16 +1,26 @@
 import hashlib
 import logging
 import re
+import threading
+from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any
 
 import httpx
 from fastapi import HTTPException
+from google.genai.errors import APIError as GoogleAPIError
+from openai import APIError as OpenAIAPIError
+from pydantic import BaseModel
 from storage3.utils import StorageException
 
 from strands import Agent, tool
 from strands.models.gemini import GeminiModel
+from strands.models.model import Model
 from strands.models.openai import OpenAIModel
 from strands.types.agent import Limits
+from strands.types.content import Messages, SystemContentBlock
+from strands.types.exceptions import ModelThrottledException
+from strands.types.streaming import StreamEvent
+from strands.types.tools import ToolChoice, ToolSpec
 from supabase import Client
 
 from src.agent.config import AgentRuntimeSettings
@@ -35,6 +45,7 @@ MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_PRODUCT_IMAGE_RESULTS = 3
 logger = logging.getLogger(__name__)
+PROVIDER_FAILURES = (ModelThrottledException, GoogleAPIError, OpenAIAPIError)
 PRODUCT_IMAGE_REQUEST = re.compile(
     r"\b(image|images|photo|photos|picture|pictures|show me|send me|see it)\b",
     re.I,
@@ -55,6 +66,120 @@ LABELED_INTERNAL_ID_PATTERN = re.compile(
     r"(?:id|identifier|reference)\s*[:#]?\s*[a-z0-9_-]{4,}\b",
     re.I,
 )
+
+
+class FailoverModel(Model):
+    def __init__(
+        self,
+        primary: Model,
+        fallback: Model,
+        *,
+        primary_provider: str,
+        fallback_provider: str,
+        business_id: str,
+    ) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.primary_provider = primary_provider
+        self.fallback_provider = fallback_provider
+        self.business_id = business_id
+
+    def update_config(self, **model_config: Any) -> None:
+        self.primary.update_config(**model_config)
+        self.fallback.update_config(**model_config)
+
+    def get_config(self) -> Any:
+        return self.primary.get_config()
+
+    async def stream(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        *,
+        tool_choice: ToolChoice | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        invocation_state: dict[str, Any] | None = None,
+        cancel_signal: threading.Event | None = None,
+        agent_metadata: Any = None,
+        structured_output_model: type[BaseModel] | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamEvent, None]:
+        try:
+            events = [
+                event
+                async for event in self.primary.stream(
+                    messages,
+                    tool_specs,
+                    system_prompt,
+                    tool_choice=tool_choice,
+                    system_prompt_content=system_prompt_content,
+                    invocation_state=invocation_state,
+                    cancel_signal=cancel_signal,
+                    agent_metadata=agent_metadata,
+                    structured_output_model=structured_output_model,
+                    **kwargs,
+                )
+            ]
+        except PROVIDER_FAILURES as error:
+            logger.warning(
+                "Agent model provider failed; retrying with fallback "
+                "business_id=%s primary=%s fallback=%s exception_type=%s",
+                self.business_id,
+                self.primary_provider,
+                self.fallback_provider,
+                type(error).__name__,
+            )
+            events = [
+                event
+                async for event in self.fallback.stream(
+                    messages,
+                    tool_specs,
+                    system_prompt,
+                    tool_choice=tool_choice,
+                    system_prompt_content=system_prompt_content,
+                    invocation_state=invocation_state,
+                    cancel_signal=cancel_signal,
+                    agent_metadata=agent_metadata,
+                    structured_output_model=structured_output_model,
+                    **kwargs,
+                )
+            ]
+        for event in events:
+            yield event
+
+    async def structured_output(
+        self,
+        output_model: type[BaseModel],
+        prompt: Messages,
+        system_prompt: str | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        try:
+            results = [
+                result
+                async for result in self.primary.structured_output(
+                    output_model, prompt, system_prompt, **kwargs
+                )
+            ]
+        except PROVIDER_FAILURES as error:
+            logger.warning(
+                "Agent model provider failed during structured output; retrying "
+                "with fallback business_id=%s primary=%s fallback=%s "
+                "exception_type=%s",
+                self.business_id,
+                self.primary_provider,
+                self.fallback_provider,
+                type(error).__name__,
+            )
+            results = [
+                result
+                async for result in self.fallback.structured_output(
+                    output_model, prompt, system_prompt, **kwargs
+                )
+            ]
+        for result in results:
+            yield result
 
 
 def sanitize_customer_response(text: str) -> str:
@@ -261,6 +386,50 @@ def find_business_products(
         }
         for row in rows
     ]
+
+
+def _create_provider_model(
+    settings: AgentRuntimeSettings,
+    provider: str,
+    *,
+    vision: bool,
+) -> Model | None:
+    if provider == "google":
+        api_key = settings.gemini_api_key
+        if api_key is None:
+            return None
+        return GeminiModel(
+            client_args={"api_key": api_key.get_secret_value()},
+            model_id=settings.selected_model_id(vision=vision)
+            if settings.agent_model_provider == provider
+            else (
+                settings.gemini_vision_model_id
+                if vision
+                else settings.gemini_model_id
+            ),
+            params={"max_output_tokens": MAX_AGENT_OUTPUT_TOKENS},
+        )
+
+    api_key = settings.openrouter_api_key
+    if api_key is None:
+        return None
+    model_id = (
+        settings.selected_model_id(vision=vision)
+        if settings.agent_model_provider == provider
+        else (
+            settings.openrouter_vision_model_id
+            if vision
+            else settings.openrouter_model_id
+        )
+    )
+    return OpenAIModel(
+        client_args={
+            "api_key": api_key.get_secret_value(),
+            "base_url": "https://openrouter.ai/api/v1",
+        },
+        model_id=model_id,
+        params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
+    )
 
 
 def search_web(query: str, limit: int = MAX_WEB_SEARCH_RESULTS) -> list[dict[str, str]]:
@@ -630,26 +799,39 @@ def build_business_agent(
             ",".join(checkout_tool_reasons),
         )
 
-    if settings.model_api_key is None:
+    fallback_provider = "openrouter" if settings.agent_model_provider == "google" else "google"
+    primary_model = _create_provider_model(
+        settings,
+        settings.agent_model_provider,
+        vision=vision_enabled,
+    )
+    fallback_model = _create_provider_model(
+        settings,
+        fallback_provider,
+        vision=vision_enabled,
+    )
+    if primary_model is None and fallback_model is None:
         raise RuntimeError(
-            f"{settings.required_api_key_name} is not configured for "
-            f"the {settings.agent_model_provider} agent provider."
+            "Configure GEMINI_API_KEY or OPENROUTER_API_KEY for the agent provider."
         )
-    model_id = settings.selected_model_id(vision=vision_enabled)
-    if settings.agent_model_provider == "google":
-        model = GeminiModel(
-            client_args={"api_key": settings.model_api_key.get_secret_value()},
-            model_id=model_id,
-            params={"max_output_tokens": MAX_AGENT_OUTPUT_TOKENS},
+    if primary_model is None:
+        logger.warning(
+            "Primary agent model provider has no API key; using fallback "
+            "business_id=%s primary=%s fallback=%s",
+            business_id,
+            settings.agent_model_provider,
+            fallback_provider,
         )
+        model = fallback_model
+    elif fallback_model is None:
+        model = primary_model
     else:
-        model = OpenAIModel(
-            client_args={
-                "api_key": settings.model_api_key.get_secret_value(),
-                "base_url": "https://openrouter.ai/api/v1",
-            },
-            model_id=model_id,
-            params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
+        model = FailoverModel(
+            primary_model,
+            fallback_model,
+            primary_provider=settings.agent_model_provider,
+            fallback_provider=fallback_provider,
+            business_id=business_id,
         )
 
     system_prompt = build_business_system_prompt(

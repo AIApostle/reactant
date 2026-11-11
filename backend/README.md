@@ -59,6 +59,11 @@ Additional configuration:
   `AGENT_MODEL_PROVIDER=openrouter`.
 - `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs
   for the OpenRouter provider.
+- When both `GEMINI_API_KEY` and `OPENROUTER_API_KEY` are configured, the agent
+  retries a failed provider request once with the other provider. Provider
+  failures are retried before any partial response or tool call is exposed, so
+  a fallback does not repeat agent side effects. If only one key is configured,
+  that provider is used without failover.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
 - `PAYPAL_WEBHOOK_IDS` — backend-only JSON object mapping each PayPal integration

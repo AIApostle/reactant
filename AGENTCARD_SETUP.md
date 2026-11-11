@@ -98,7 +98,11 @@ expose the key to the frontend. Google's native Gemini provider remains
 available by setting `AGENT_MODEL_PROVIDER=google`, `GEMINI_API_KEY`, and
 optionally `GEMINI_MODEL_ID`.
 
-The OpenRouter provider can be changed without removing Google Gemini support.
+When both provider keys are configured, a provider API failure triggers one
+retry with the other provider. The response is buffered before agent tools run,
+so a failed provider cannot cause the fallback to repeat checkout or another
+tool side effect. With only one provider key, the agent uses that provider but
+cannot fail over.
 
 ### Vercel frontend environment
 

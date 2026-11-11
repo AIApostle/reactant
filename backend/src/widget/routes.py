@@ -244,7 +244,7 @@ def _process_widget_message(
         and customer_context.get("memory_opt_in") is True
     )
     settings = get_agent_runtime_settings()
-    if not settings.strands_agent_enabled or settings.model_api_key is None:
+    if not settings.strands_agent_enabled or not settings.has_model_api_key:
         logger.error("Website chat agent is unavailable business_id=%s", business_id)
         _save_widget_agent_message(
             client,

@@ -166,10 +166,10 @@ async def run_agent_worker() -> None:
     runtime_settings = get_agent_runtime_settings()
     if not runtime_settings.strands_agent_enabled:
         return
-    if runtime_settings.model_api_key is None:
+    if not runtime_settings.has_model_api_key:
         logger.error(
-            "Strands worker is enabled but %s is not configured.",
-            runtime_settings.required_api_key_name,
+            "Strands worker is enabled but neither GEMINI_API_KEY nor "
+            "OPENROUTER_API_KEY is configured."
         )
         return
     if get_supabase_settings().supabase_secret_key is None:
@@ -217,12 +217,15 @@ def require_agent_runtime() -> None:
                 "message": "The agent runtime is not configured.",
             },
         )
-    if runtime_settings.model_api_key is None:
+    if not runtime_settings.has_model_api_key:
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "agent_runtime_unavailable",
-                "message": f"The agent runtime requires {runtime_settings.required_api_key_name}.",
+                "message": (
+                    "The agent runtime requires GEMINI_API_KEY or "
+                    "OPENROUTER_API_KEY."
+                ),
             },
         )
     if get_supabase_settings().supabase_secret_key is None:

@@ -248,7 +248,7 @@ def get_owner_assistant_status(
     settings = get_agent_runtime_settings()
     if not settings.strands_agent_enabled:
         reason = "disabled"
-    elif settings.model_api_key is None:
+    elif not settings.has_model_api_key:
         reason = (
             "missing_google_key"
             if settings.agent_model_provider == "google"
