@@ -3,7 +3,7 @@ import unittest
 from fastapi import HTTPException
 from postgrest.exceptions import APIError
 
-from src.supabase.repository import execute_response
+from src.supabase.repository import execute, execute_response
 
 
 class DatabaseSchemaErrorTests(unittest.TestCase):
@@ -22,3 +22,12 @@ class DatabaseSchemaErrorTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(raised.exception.detail["code"], "database_schema_outdated")
+
+
+class MaybeSingleQueryTests(unittest.TestCase):
+    def test_execute_preserves_no_rows_result_from_maybe_single_query(self) -> None:
+        class Query:
+            def execute(self):
+                return None
+
+        self.assertIsNone(execute(Query()))

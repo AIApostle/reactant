@@ -65,10 +65,7 @@ def execute_response(query: Any) -> Any:
 def execute(query: Any) -> Any:
     response = execute_response(query)
     if response is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "database_unavailable", "message": "The database returned no response."},
-        )
+        return None
     return response.data
 
 
