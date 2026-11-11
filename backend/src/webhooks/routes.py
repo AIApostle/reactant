@@ -39,7 +39,7 @@ from src.supabase.client import (
 )
 from src.supabase.repository import execute
 from cryptography.fernet import Fernet, InvalidToken
-from src.agentcard.paypal import PayPalError
+from src.agentcard.paypal import PayPalError, platform_paypal_credentials
 from src.agentcard.routes import process_verified_paypal_webhook
 
 
@@ -969,8 +969,20 @@ async def receive_paypal_webhook(
         _integration_credentials, client, integration_id, "paypal"
     )
     webhook_id = credentials.get("webhook_id")
-    client_id = credentials.get("consumer_key")
-    client_secret = credentials.get("consumer_secret")
+    if credentials.get("mode") != "partner_after_payment":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "webhook_verification_unavailable", "message": "This integration is not configured for PayPal seller onboarding webhook verification."},
+        )
+    try:
+        platform_credentials = platform_paypal_credentials()
+    except PayPalError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "webhook_verification_unavailable", "message": "PayPal partner credentials are not configured for webhook verification."},
+        ) from error
+    client_id = platform_credentials["client_id"]
+    client_secret = platform_credentials["client_secret"]
     api_base = get_supabase_settings().paypal_api_base_url.rstrip("/")
     if (
         not isinstance(webhook_id, str)

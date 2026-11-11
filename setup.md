@@ -12,11 +12,12 @@ This setup follows the product workflow in [`prd.md`](./prd.md):
 6. The backend verifies PayPal capture details before confirming payment,
    issuing a receipt, and updating the order.
 
-Reactant never receives or stores money. Each business connects its own PayPal
-merchant application, so PayPal sends the payment to that business's PayPal
-account. Reactant does not hold merchant funds. Refunds are explicit
-owner/admin actions and are verified with PayPal before the order ledger is
-updated.
+PayPal Checkout uses Reactant's server-side partner app credentials to route
+payments to the business's PayPal account. Owners enter the seller account
+email only; app credentials and BN attribution remain backend-only. In
+after-payment onboarding, the first payment can remain pending while the
+seller completes PayPal's onboarding. The seller must have a business PayPal
+account and finish within 30 days or PayPal returns the payment.
 
 For the detailed AgentCard environment checklist, PayPal webhook setup, and
 end-to-end Sandbox procedure, see [`AGENTCARD_SETUP.md`](./AGENTCARD_SETUP.md).
@@ -175,32 +176,20 @@ Required testing outcomes:
 
 ## 5. Prepare PayPal Sandbox
 
-Use the PayPal Developer Dashboard, not a personal password:
+Use the PayPal Developer Dashboard, not a personal password. Reactant must be
+approved for PayPal Multiparty and have **Onboard after payment** enabled on
+the REST app. In Render, set the Sandbox REST app credentials,
+`PAYPAL_PARTNER_ATTRIBUTION_ID`, `PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com`,
+`PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true`, and `AGENTCARD_ENABLED=true`.
+Never put app credentials or the BN code in Vercel or business settings.
 
-1. Create a PayPal Sandbox business account for the test business.
-2. Create a Sandbox REST app under that business account.
-3. Save the Sandbox client ID and client secret securely.
-4. Set `PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com`.
-5. Use a Sandbox personal account as the customer and the Sandbox business
-   account as the merchant.
-
-Connect the PayPal Sandbox client ID and secret first, then use **Webhook
-setup** on the integration card. Reactant displays the webhook URL containing
-the newly-created integration ID. Create the webhook in that same Sandbox
-REST app, subscribe to `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`,
-`PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.DENIED`,
-`PAYMENT.CAPTURE.REFUNDED`, and `CHECKOUT.PAYMENT-APPROVAL.REVERSED`, then
-save the webhook ID in Reactant. PayPal credentials and webhook ID are
-encrypted at rest and never returned to the frontend.
-
-The backend uses only the connected business's encrypted PayPal credentials;
-it never falls back to the deployment's global PayPal credentials. Connect the
-Sandbox app through the Integrations page and use its Test action before
-enabling AgentCard. The merchant must be in a configured receiving country.
-AgentCard is disabled until `AGENTCARD_ENABLED=true` (either `true` or `True`
-is accepted); `PAYPAL_RECEIVING_COUNTRIES` defaults to `US`. Do not enable live
-payments until PayPal has confirmed your merchant eligibility and any required
-platform/partner approval.
+In Integrations, connect the business's PayPal business-account email, then
+create a webhook in the same Sandbox REST app using Reactant's exact URL.
+Sandbox buyers and sellers must use Sandbox accounts. After the first payment,
+PayPal emails the seller to finish onboarding; the pending payment is returned
+if onboarding is not completed within 30 days. See
+[PayPal's seller onboarding after payment documentation](https://developer.paypal.com/platforms/seller-onboarding/after-payment/)
+and [PayPal's Multiparty documentation](https://developer.paypal.com/platforms/).
 
 Enable the agent's order and PayPal checkout permissions for the test
 workspace. The agent can only submit catalog product IDs and quantities; the
@@ -243,12 +232,13 @@ Run the test in this order:
 2. Create/select a business.
 3. Apply migration 0003 and set `SUPABASE_SECRET_KEY`,
    `CREDENTIALS_ENCRYPTION_KEY`, and the hosted HTTPS URLs in Render.
-4. Connect and test the Telegram bot and PayPal Sandbox app from Integrations;
-   complete the PayPal webhook setup in the integration card.
+4. Connect and test the Telegram bot. Connect the seller's PayPal business
+   account and configure the Sandbox webhook as described in
+   `AGENTCARD_SETUP.md`.
 5. Add an active, agent-enabled catalog item with current price and stock.
 6. Enable the Business Agent and its order and PayPal checkout permissions.
-7. Set `AGENTCARD_ENABLED=true` in Render and redeploy after credentials and
-   webhooks are ready.
+7. Verify that the PayPal integration is connected and Integrations identifies
+   it as **Sandbox testing only**. This mode must never use live PayPal.
 8. Ask the agent about the item in Telegram, then explicitly confirm purchase
    and quantity when prompted.
 9. Open the exact secure checkout URL sent by the agent, review the order, and
@@ -274,5 +264,6 @@ Before provider testing, provide or configure:
 - OpenRouter access to the configured vision-capable model.
 
 Store deployment secrets in Render's environment settings or a secret manager.
-Enter per-business Telegram and PayPal credentials only through the hosted
-Integrations page over HTTPS; never send secrets through chat or commit them.
+Enter per-business Telegram credentials only through the hosted Integrations
+page over HTTPS. PayPal platform credentials belong only in Render's backend
+environment; never send secrets through chat or commit them.

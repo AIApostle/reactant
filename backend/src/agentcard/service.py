@@ -73,7 +73,7 @@ def _paypal_integration(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "paypal_not_connected",
-                "message": "This business has not connected and tested its own PayPal account.",
+                "message": "This business has not connected its PayPal account.",
             },
         )
     return integration["id"]

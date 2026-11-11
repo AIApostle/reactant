@@ -13,7 +13,11 @@ from fastapi.responses import RedirectResponse
 from supabase import Client
 
 from src.auth.dependencies import AuthenticatedUser, get_current_user
-from src.agentcard.paypal import PayPalError, validate_paypal_credentials
+from src.agentcard.paypal import (
+    PayPalError,
+    platform_paypal_credentials,
+    validate_paypal_credentials,
+)
 from src.schemas.common import CollectionEnvelope, PaginationMeta, ResourceEnvelope
 from src.schemas.integrations import (
     IntegrationCreate,
@@ -134,12 +138,37 @@ def _validate_provider_credentials(body: IntegrationCreate) -> dict[str, str]:
                 detail={"code": "validation_error", "message": "The request could not be completed."},
             )
     elif body.provider == "paypal":
-        required = {"consumer_key", "consumer_secret"}
-        if not required.issubset(credentials):
+        if credentials.get("consumer_key") or credentials.get("consumer_secret"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"code": "validation_error", "message": "PayPal client ID and secret are required."},
+                detail={
+                    "code": "paypal_business_credentials_not_allowed",
+                    "message": "Do not submit PayPal REST app credentials for a business. Reactant uses its backend-only partner app credentials.",
+                },
             )
+        seller_email = credentials.get("seller_paypal_email")
+        if not isinstance(seller_email, str) or not seller_email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "paypal_seller_email_required",
+                    "message": "Enter the business's PayPal account email.",
+                },
+            )
+        try:
+            platform_paypal_credentials()
+        except PayPalError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "paypal_partner_not_configured",
+                    "message": "PayPal Multiparty after-payment onboarding is not configured. Businesses must not submit their PayPal app credentials.",
+                },
+            ) from error
+        credentials = {
+            "mode": "partner_after_payment",
+            "seller_paypal_email": seller_email,
+        }
     elif body.provider == "website_chat":
         origin = credentials.get("allowed_origin", "").strip().rstrip("/")
         try:
@@ -349,6 +378,23 @@ def create_integration(
         )
     membership = get_business_membership(client, business_id, user.id)
     require_role(membership, {"owner", "admin"})
+    if body.provider == "paypal":
+        existing = execute(
+            client.table("integrations")
+            .select("id")
+            .eq("business_id", str(business_id))
+            .eq("provider", "paypal")
+            .neq("status", "disconnected")
+            .limit(1)
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "paypal_integration_already_exists",
+                    "message": "Disconnect the existing PayPal integration before connecting a seller account.",
+                },
+            )
     credentials = _validate_provider_credentials(body)
     ciphertext = _cipher().encrypt(
         json.dumps(credentials, separators=(",", ":"), sort_keys=True).encode()
@@ -638,7 +684,7 @@ def test_integration(
     require_role(membership, {"owner", "admin"})
     integration = execute(
         client.table("integrations")
-        .select("id,provider,credentials_ciphertext")
+        .select("id,provider,credentials_ciphertext,sync_status")
         .eq("business_id", str(business_id))
         .eq("id", str(integration_id))
         .maybe_single()
@@ -683,19 +729,40 @@ def test_integration(
                 detail={"code": "shopify_unavailable", "message": "Shopify rejected the connection."},
             ) from error
     elif integration["provider"] == "paypal":
-        try:
-            validate_paypal_credentials(
-                {
-                    "client_id": credentials["consumer_key"],
-                    "client_secret": credentials["consumer_secret"],
-                }
+        if integration.get("sync_status") == "seller_reauthorization_required":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "paypal_seller_reauthorization_required",
+                    "message": "Disconnect this PayPal connection and reconnect the seller account.",
+                },
             )
-        except (KeyError, PayPalError) as error:
+        if credentials.get("mode") != "partner_after_payment":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "paypal_after_payment_mode_required",
+                    "message": "Disconnect this legacy PayPal integration and connect the business PayPal account instead.",
+                },
+            )
+        try:
+            paypal_app_credentials = platform_paypal_credentials()
+        except PayPalError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "paypal_partner_not_configured",
+                    "message": "PayPal Multiparty after-payment onboarding is not configured.",
+                },
+            ) from error
+        try:
+            validate_paypal_credentials(paypal_app_credentials)
+        except PayPalError as error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={
                     "code": "paypal_credentials_invalid",
-                    "message": "PayPal did not accept these business account credentials.",
+                    "message": "PayPal did not accept Reactant's partner app credentials.",
                 },
             ) from error
     elif integration["provider"] == "website_chat":
@@ -710,6 +777,15 @@ def test_integration(
             detail={"code": "provider_not_supported", "message": "This provider is not available yet."},
         )
     now = datetime.now(timezone.utc).isoformat()
+    sync_status = (
+        (
+            "seller_connected"
+            if integration.get("sync_status") == "seller_connected"
+            else "seller_onboarding_pending"
+        )
+        if integration["provider"] == "paypal"
+        else "ready"
+    )
     updated = _execute_integration_query(
         lambda fields, _include_origin: client.table("integrations")
         .update(
@@ -718,7 +794,7 @@ def test_integration(
                 "connected_at": now,
                 "last_success_at": now,
                 "last_error": None,
-                "sync_status": "ready",
+                "sync_status": sync_status,
                 "updated_at": now,
             }
         )

@@ -181,6 +181,7 @@ def create_agentcard_payment(
             credentials,
             public_transaction_id=transaction["public_transaction_id"],
             business_name=snapshot["business"]["name"],
+            seller_paypal_email=credentials["seller_paypal_email"],
             amount_minor=transaction["total_amount_minor"],
             currency=transaction["currency"],
             checkout_url=checkout_url,
@@ -428,6 +429,19 @@ def refund_business_agentcard_transaction(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "not_found", "message": "The requested transaction was not found."},
         )
+    credentials = paypal_credentials(
+        service_client,
+        str(business_id),
+        transaction["provider_integration_id"],
+    )
+    if credentials.get("seller_onboarding_status") != "seller_connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "paypal_seller_not_onboarded",
+                "message": "PayPal does not allow refunds until the seller completes account onboarding.",
+            },
+        )
     result = _record(
         execute(
             service_client.rpc(
@@ -469,11 +483,6 @@ def refund_business_agentcard_transaction(
                 "message": "The captured PayPal payment could not be located. Do not retry with a new idempotency key.",
             },
         )
-    credentials = paypal_credentials(
-        service_client,
-        str(business_id),
-        transaction["provider_integration_id"],
-    )
     provider_refund_id = result.get("provider_refund_id")
     try:
         if not provider_refund_id:
@@ -556,6 +565,67 @@ def process_verified_paypal_webhook(
             on_conflict="provider,provider_event_id",
         )
     )
+    if event_type in {
+        "MERCHANT.ONBOARDING.COMPLETED",
+        "MERCHANT.PARTNER-CONSENT.REVOKED",
+    }:
+        integration = execute(
+            client.table("integrations")
+            .select("status")
+            .eq("business_id", business_id)
+            .eq("id", integration_id)
+            .eq("provider", "paypal")
+            .maybe_single()
+        )
+        if not integration or integration["status"] == "disconnected":
+            execute(
+                client.table("agentcard_webhook_events")
+                .update(
+                    {
+                        "processing_status": "ignored",
+                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .match(event_key)
+            )
+            return
+        completed = event_type == "MERCHANT.ONBOARDING.COMPLETED"
+        execute(
+            client.table("integrations")
+            .update(
+                {
+                    "status": "connected" if completed else "disconnected",
+                    "sync_status": (
+                        "seller_connected"
+                        if completed
+                        else "seller_reauthorization_required"
+                    ),
+                    "last_success_at": (
+                        datetime.now(timezone.utc).isoformat() if completed else None
+                    ),
+                    "last_error": (
+                        None
+                        if completed
+                        else "PayPal seller access was revoked. Reconnect the seller account."
+                    ),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("business_id", business_id)
+            .eq("id", integration_id)
+            .eq("provider", "paypal")
+        )
+        execute(
+            client.table("agentcard_webhook_events")
+            .update(
+                {
+                    "processing_status": "processed",
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .match(event_key)
+        )
+        return
     if event_type == "PAYMENT.CAPTURE.REFUNDED" and isinstance(resource, dict):
         supplementary = resource.get("supplementary_data")
         related = (

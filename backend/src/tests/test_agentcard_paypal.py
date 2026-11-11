@@ -11,6 +11,7 @@ from src.agentcard.paypal import (
     verified_capture_details,
     verified_refund_details,
 )
+from src.agentcard.routes import process_verified_paypal_webhook
 from src.agentcard.receipts import _receipt_pdf
 
 
@@ -108,10 +109,43 @@ class PayPalAmountTests(unittest.TestCase):
                 {"client_id": "id", "client_secret": "secret"},
                 public_transaction_id="txn_example",
                 business_name="Test business",
+                seller_paypal_email="seller@example.com",
                 amount_minor=100,
                 currency="USD",
                 checkout_url="https://shop.example/checkout/token",
             )
+
+    @patch("src.agentcard.paypal._authenticated_request")
+    def test_checkout_routes_payment_to_seller_and_marks_instant_disbursement(
+        self,
+        request,
+    ) -> None:
+        request.return_value = {
+            "id": "ORDER-123",
+            "links": [{"rel": "approve", "href": "https://www.paypal.com/checkout"}],
+        }
+
+        create_paypal_order(
+            {
+                "client_id": "id",
+                "client_secret": "secret",
+                "partner_attribution_id": "Reactant_BN",
+            },
+            public_transaction_id="txn_example",
+            business_name="Test business",
+            seller_paypal_email="seller@example.com",
+            amount_minor=100,
+            currency="USD",
+            checkout_url="https://shop.example/checkout/token",
+        )
+
+        payload = request.call_args.kwargs["payload"]
+        purchase_unit = payload["purchase_units"][0]
+        self.assertEqual(purchase_unit["payee"], {"email_address": "seller@example.com"})
+        self.assertEqual(
+            purchase_unit["payment_instruction"],
+            {"disbursement_mode": "INSTANT"},
+        )
 
     @patch("src.agentcard.paypal._access_token", return_value="access-token")
     @patch("src.agentcard.paypal.httpx.Client")
@@ -133,10 +167,18 @@ class PayPalAmountTests(unittest.TestCase):
             result = _authenticated_request(
                 "GET",
                 "/v2/checkout/orders/ORDER-123",
-                {"client_id": "id", "client_secret": "secret"},
+                {
+                    "client_id": "id",
+                    "client_secret": "secret",
+                    "partner_attribution_id": "Reactant_BN",
+                },
             )
 
         self.assertEqual(result, {"id": "ORDER-123"})
+        self.assertEqual(
+            http.request.call_args.kwargs["headers"]["PayPal-Partner-Attribution-Id"],
+            "Reactant_BN",
+        )
         self.assertEqual(
             http.request.call_args.kwargs["headers"]["Authorization"],
             "Bearer access-token",
@@ -169,6 +211,39 @@ class PayPalAmountTests(unittest.TestCase):
             kwargs["payload"]["amount"],
             {"currency_code": "USD", "value": "5.00"},
         )
+
+
+class PayPalOnboardingWebhookTests(unittest.TestCase):
+    @patch("src.agentcard.routes.execute")
+    def test_onboarding_events_update_the_seller_connection_state(self, execute) -> None:
+        for event_type, expected_status, expected_sync_status in (
+            (
+                "MERCHANT.ONBOARDING.COMPLETED",
+                "connected",
+                "seller_connected",
+            ),
+            (
+                "MERCHANT.PARTNER-CONSENT.REVOKED",
+                "disconnected",
+                "seller_reauthorization_required",
+            ),
+        ):
+            with self.subTest(event_type=event_type):
+                client = MagicMock()
+                process_verified_paypal_webhook(
+                    client,
+                    integration_id="integration-id",
+                    business_id="business-id",
+                    payload={
+                        "id": f"event-{event_type}",
+                        "event_type": event_type,
+                        "resource": {},
+                    },
+                )
+                integration_update = client.table.return_value.update.call_args_list[0].args[0]
+                self.assertEqual(integration_update["status"], expected_status)
+                self.assertEqual(integration_update["sync_status"], expected_sync_status)
+                client.table.return_value.reset_mock()
 
 
 class AgentCardReceiptTests(unittest.TestCase):

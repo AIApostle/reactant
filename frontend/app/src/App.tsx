@@ -2151,12 +2151,13 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [telegramSetupFor, setTelegramSetupFor] = useState<string | null>(null)
   const [paypalSetup, setPaypalSetup] = useState<(PayPalWebhookSetup & { integrationId: string }) | null>(null)
   const [paypalWebhookId, setPaypalWebhookId] = useState('')
+  const [paypalSellerEmail, setPaypalSellerEmail] = useState('')
   const [websiteInstall, setWebsiteInstall] = useState<WebsiteChatInstall | null>(null)
   const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
     { provider: 'WooCommerce', key: 'woocommerce', description: 'Sync products, stock, and orders from your online store.', icon: Storefront, category: 'Store' },
     { provider: 'Shopify', key: 'shopify', description: 'Import products and inventory from your Shopify store.', icon: Storefront, category: 'Store' },
     { provider: 'Telegram', key: 'telegram', description: 'Receive customer messages through your Telegram bot.', icon: TelegramLogo, category: 'Messaging' },
-    { provider: 'PayPal', key: 'paypal', description: 'Create customer checkout sessions and verify payments.', icon: CreditCard, category: 'Payments' },
+    { provider: 'PayPal', key: 'paypal', description: 'Accept customer payments directly to the business PayPal account.', icon: CreditCard, category: 'Payments' },
     { provider: 'Website chat', key: 'website_chat', description: 'Add a floating customer-support chat to your website or web app.', icon: ChatCircleDots, category: 'Messaging' },
   ]
   const websiteConnections = integrations.filter((item) => item.provider === 'website_chat' && item.status !== 'disconnected')
@@ -2221,6 +2222,32 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     }
   }
 
+  async function connectPaypalSeller(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      const created = await apiRequest<Integration>(businessPath(businessId, '/integrations'), {
+        method: 'POST',
+        body: JSON.stringify({
+          provider: 'paypal',
+          credentials: { seller_paypal_email: paypalSellerEmail.trim() },
+        }),
+      })
+      const connected = await apiRequest<Integration>(
+        businessPath(businessId, `/integrations/${created.id}/test`),
+        { method: 'POST' },
+      )
+      setIntegrations((items) => [connected, ...items.filter((item) => item.id !== connected.id)])
+      setPaypalSellerEmail('')
+      notify('Reactant’s PayPal partner app was verified. Seller onboarding starts after the first payment.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The business PayPal account could not be connected.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function createConnection(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!dialogProvider) return
@@ -2242,6 +2269,10 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       }
       return
     }
+    if (dialogProvider === 'PayPal') {
+      setError('PayPal account linking is unavailable until Reactant is approved for PayPal Multiparty Partner Referrals.')
+      return
+    }
     const credentials = dialogProvider === 'Website chat'
       ? { allowed_origin: String(formData.get('allowed_origin') ?? '').trim() }
       : dialogProvider === 'WooCommerce'
@@ -2253,10 +2284,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
         }
       : dialogProvider === 'Telegram'
         ? { bot_token: String(formData.get('bot_token') ?? ''), webhook_secret: createWebhookSecret() }
-        : {
-            consumer_key: String(formData.get('paypal_client_id') ?? ''),
-            consumer_secret: String(formData.get('paypal_client_secret') ?? ''),
-          }
+        : {}
     setSaving(true)
     setError('')
     try {
@@ -2363,11 +2391,30 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           const providerConnections = integrations.filter((item) => item.provider === provider.key && item.status !== 'disconnected')
           const connection = providerConnections.find(integrationIsConnected) ?? providerConnections[0]
           const connected = connection ? integrationIsConnected(connection) : false
+          const paypalStatusLabel = connection?.sync_status === 'seller_onboarding_pending'
+            ? 'Ready — seller onboarding after first payment'
+            : connection?.sync_status === 'seller_connected'
+              ? 'Seller connected'
+              : connection?.sync_status === 'seller_reauthorization_required'
+                ? 'Seller access revoked'
+                : connection?.sync_status === 'ready'
+                  ? 'Legacy Sandbox connection'
+                  : null
           return (
             <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={provider.key}>
               <div className="integration-card-top"><span className={`integration-icon integration-icon-${provider.provider.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{provider.category}</Badge></div>
               <h2>{provider.provider}</h2>
               <p>{provider.description}</p>
+              {provider.key === 'paypal' && (
+                <div className="integration-setup-details">
+                  <strong>PayPal Checkout with after-payment onboarding</strong>
+                  <small>Enter the business PayPal account email, not REST app credentials. PayPal must have enabled Onboard after payment for Reactant’s REST app. The first payment is sent to that seller and can remain pending while PayPal emails them to finish onboarding. A business PayPal account is required; incomplete onboarding after 30 days results in the payment being returned. Reactant’s app credentials and BN attribution stay on the backend.</small>
+                  {connection?.sync_status === 'seller_onboarding_pending' && <small>Waiting for the seller to complete PayPal onboarding after the first payment.</small>}
+                  {connection?.sync_status === 'seller_connected' && <small>The seller has completed PayPal onboarding.</small>}
+                  {connection?.sync_status === 'seller_reauthorization_required' && <small>PayPal seller access was revoked. Disconnect this connection and reconnect the seller account.</small>}
+                  {connection?.sync_status === 'ready' && <small>This is a legacy Sandbox connection. Disconnect it before connecting the business PayPal account.</small>}
+                </div>
+              )}
               {provider.key === 'telegram' && telegramSetup && connection?.id === telegramSetupFor && (
                 <div className="integration-setup-details">
                   <strong>Telegram webhook ready</strong>
@@ -2378,7 +2425,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
               {provider.key === 'paypal' && connection && paypalSetup?.integrationId === connection.id && (
                 <div className="integration-setup-details">
                   <strong>PayPal webhook URL</strong>
-                  <small>Create a webhook for this exact URL in the PayPal Developer Dashboard.</small>
+                  <small>In the PayPal Developer Dashboard, open Reactant’s REST app and create a webhook for this exact URL. Subscribe to MERCHANT.ONBOARDING.COMPLETED, MERCHANT.PARTNER-CONSENT.REVOKED, CHECKOUT.ORDER.APPROVED, PAYMENT.CAPTURE.COMPLETED, PAYMENT.CAPTURE.PENDING, PAYMENT.CAPTURE.DENIED, PAYMENT.CAPTURE.REFUNDED, and CHECKOUT.PAYMENT-APPROVAL.REVERSED.</small>
                   <code className="integration-webhook-url">{paypalSetup.webhook_url}</code>
                   <label className="field-label" htmlFor={`paypal-webhook-id-${connection.id}`}>PayPal webhook ID</label>
                   <input
@@ -2389,7 +2436,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                     placeholder={paypalSetup.configured ? 'Saved securely; enter to replace' : 'Paste the webhook ID'}
                     autoComplete="off"
                   />
-                  <small>The ID is stored encrypted with this business’s PayPal credentials.</small>
+                  <small>Paste the webhook ID PayPal returns. Reactant verifies notifications with its backend-only app credentials. The ID is stored encrypted for this workspace; no business PayPal app credentials are used.</small>
                   <Button
                     variant="soft"
                     color="gray"
@@ -2447,7 +2494,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                   ? <>
                       <div className="integration-status">
                         {connected ? <CheckCircle size={15} weight="fill" /> : <WarningCircle size={15} />}
-                        <span>{connected ? 'Connected' : connection.status.replaceAll('_', ' ')}</span>
+                        <span>{provider.key === 'paypal' && paypalStatusLabel ? paypalStatusLabel : connected ? 'Connected' : connection.status.replaceAll('_', ' ')}</span>
                         {!connected && connection.last_error && <small className="integration-error-text">{connection.last_error}</small>}
                       </div>
                       <div className="integration-card-actions-buttons">
@@ -2461,7 +2508,24 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                         {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => setIntegrationToDisconnect(connection)}>Disconnect</Button>}
                       </div>
                     </>
-                  : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
+                  : provider.key === 'paypal' ? (
+                    <form className="integration-setup-details" onSubmit={(event) => void connectPaypalSeller(event)}>
+                      <label className="field-label" htmlFor="paypal-seller-email">Business PayPal account email</label>
+                      <input
+                        className="integration-webhook-input"
+                        id="paypal-seller-email"
+                        type="email"
+                        autoComplete="email"
+                        required
+                        value={paypalSellerEmail}
+                        onChange={(event) => setPaypalSellerEmail(event.target.value)}
+                        placeholder="payments@business.example"
+                      />
+                      <Button type="submit" disabled={saving || !paypalSellerEmail.trim()}>
+                        {saving ? 'Connecting...' : 'Connect PayPal account'}
+                      </Button>
+                    </form>
+                  ) : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
                 {provider.key === 'website_chat' && connection && (
                   <Button variant="soft" color="gray" onClick={() => { setError(''); setDialogProvider('Website chat') }}>Add custom</Button>
                 )}
@@ -2491,7 +2555,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 ? 'Create a bot with Telegram BotFather, then paste its token. Keep the token private.'
               : dialogProvider === 'Website chat'
                 ? 'Register the exact site origin. Use HTTPS in production; localhost is accepted for local testing.'
-                  : 'Use the REST app credentials from PayPal. After saving them, Reactant will show the webhook URL; then create the webhook and save its ID.'}
+                  : 'Connect the service using its account authorization.'}
           </Dialog.Description>
           <form className="connection-form" onSubmit={(event) => void createConnection(event)}>
             {dialogProvider === 'Website chat' ? (
@@ -2522,15 +2586,9 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 <SecretTextField id="connection-bot-token" name="bot_token" label="Telegram bot token" />
                 <p className="form-note">Create a bot with @BotFather. Reactant configures the webhook; never share this token with customers.</p>
               </>
-            ) : (
-              <>
-                <label className="field-label" htmlFor="paypal-client-id">PayPal REST app client ID</label>
-                <SecretTextField id="paypal-client-id" name="paypal_client_id" label="PayPal REST app client ID" />
-                <label className="field-label" htmlFor="paypal-client-secret">PayPal REST app secret</label>
-                <SecretTextField id="paypal-client-secret" name="paypal_client_secret" label="PayPal REST app secret" />
-                <p className="form-note">Use Sandbox app credentials for testing. After connecting, open Webhook setup, create a webhook using the URL Reactant provides, and save its ID. Reactant never receives permission to access your balance or move funds.</p>
-              </>
-            )}
+            ) : dialogProvider === 'PayPal' ? (
+              <p className="form-note">Enter the business PayPal account email in Integrations. Reactant uses its partner app credentials and BN attribution code on the backend; never enter a business REST app secret.</p>
+            ) : null}
             {error && <p className="api-error" role="alert">{error}</p>}
             <div className="dialog-actions">
               <Button type="button" variant="soft" color="gray" disabled={saving} onClick={() => setDialogProvider(null)}>Cancel</Button>

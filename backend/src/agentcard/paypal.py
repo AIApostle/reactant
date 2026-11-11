@@ -17,6 +17,26 @@ class PayPalError(RuntimeError):
     pass
 
 
+def platform_paypal_credentials() -> dict[str, str]:
+    settings = get_supabase_settings()
+    if (
+        not settings.paypal_onboarding_after_payment_enabled
+        or settings.paypal_api_base_url.rstrip("/")
+        not in {"https://api-m.sandbox.paypal.com", "https://api-m.paypal.com"}
+        or settings.paypal_client_id is None
+        or settings.paypal_secret_key is None
+        or not settings.paypal_partner_attribution_id
+    ):
+        raise PayPalError(
+            "PayPal Multiparty after-payment onboarding is not configured."
+        )
+    return {
+        "client_id": settings.paypal_client_id.get_secret_value(),
+        "client_secret": settings.paypal_secret_key.get_secret_value(),
+        "partner_attribution_id": settings.paypal_partner_attribution_id,
+    }
+
+
 def _paypal_api_base() -> str:
     base_url = get_supabase_settings().paypal_api_base_url.rstrip("/")
     if base_url not in {
@@ -34,7 +54,7 @@ def paypal_credentials(
 ) -> dict[str, str]:
     integration = execute(
         client.table("integrations")
-        .select("id,credentials_ciphertext,status")
+        .select("id,credentials_ciphertext,status,sync_status")
         .eq("business_id", business_id)
         .eq("id", integration_id)
         .eq("provider", "paypal")
@@ -71,11 +91,7 @@ def paypal_credentials(
                 "message": "The business PayPal integration could not be read.",
             },
         ) from error
-    if (
-        not isinstance(credentials, dict)
-        or not isinstance(credentials.get("consumer_key"), str)
-        or not isinstance(credentials.get("consumer_secret"), str)
-    ):
+    if not isinstance(credentials, dict):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -83,9 +99,37 @@ def paypal_credentials(
                 "message": "The business PayPal integration is incomplete.",
             },
         )
+    seller_paypal_email = credentials.get("seller_paypal_email")
+    if not isinstance(seller_paypal_email, str) or not seller_paypal_email:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_merchant_unavailable",
+                "message": "The business PayPal account email is missing.",
+            },
+        )
+    if credentials.get("mode") != "partner_after_payment":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_merchant_unavailable",
+                "message": "This PayPal integration is not configured for seller after-payment onboarding.",
+            },
+        )
+    try:
+        platform_credentials = platform_paypal_credentials()
+    except PayPalError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "paypal_partner_not_configured",
+                "message": "PayPal Multiparty after-payment onboarding is not configured.",
+            },
+        ) from error
     return {
-        "client_id": credentials["consumer_key"],
-        "client_secret": credentials["consumer_secret"],
+        **platform_credentials,
+        "seller_paypal_email": seller_paypal_email,
+        "seller_onboarding_status": integration.get("sync_status", ""),
         **(
             {"webhook_id": credentials["webhook_id"]}
             if isinstance(credentials.get("webhook_id"), str)
@@ -159,6 +203,15 @@ def _authenticated_request(
                 headers={
                     "Authorization": "Bearer {}".format(token),
                     "Accept": "application/json",
+                    **(
+                        {
+                            "PayPal-Partner-Attribution-Id": credentials[
+                                "partner_attribution_id"
+                            ]
+                        }
+                        if credentials.get("partner_attribution_id")
+                        else {}
+                    ),
                     **({"PayPal-Request-Id": request_id} if request_id else {}),
                 },
                 json=payload,
@@ -191,6 +244,7 @@ def create_paypal_order(
     *,
     public_transaction_id: str,
     business_name: str,
+    seller_paypal_email: str,
     amount_minor: int,
     currency: str,
     checkout_url: str,
@@ -214,10 +268,12 @@ def create_paypal_order(
                     "reference_id": public_transaction_id,
                     "custom_id": public_transaction_id,
                     "invoice_id": public_transaction_id,
+                    "payee": {"email_address": seller_paypal_email},
                     "amount": {
                         "currency_code": currency,
                         "value": minor_to_paypal_amount(amount_minor),
                     },
+                    "payment_instruction": {"disbursement_mode": "INSTANT"},
                 }
             ],
             "application_context": {

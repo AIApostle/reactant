@@ -34,6 +34,7 @@ class SupabaseSettings(BaseSettings):
     paypal_api_base_url: str = "https://api-m.sandbox.paypal.com"
     paypal_receiving_countries: str = "US"
     agentcard_enabled: bool = False
+    paypal_onboarding_after_payment_enabled: bool = False
     public_api_base_url: str | None = None
     public_frontend_url: str = "http://localhost:5173"
     shopify_client_id: str | None = None
@@ -41,6 +42,7 @@ class SupabaseSettings(BaseSettings):
     shopify_scopes: str = "read_products,read_inventory,read_orders"
     paypal_client_id: SecretStr | None = None
     paypal_secret_key: SecretStr | None = None
+    paypal_partner_attribution_id: str | None = None
     memwal_delegate_key: SecretStr | None = None
     memwal_account_id: str | None = None
     memwal_server_url: str | None = None

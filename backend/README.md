@@ -63,11 +63,16 @@ Additional configuration:
   for hosting the `reactant-chat.js` website widget installer.
 - `AGENTCARD_ENABLED` — deployment-wide opt-in for agent-originated checkout;
   defaults to `false`; both `true` and `True` are accepted.
+- `PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED` — explicit opt-in after PayPal has
+  enabled the **Onboard after payment** capability for Reactant's partner REST
+  app. The code flag does not enable the capability in PayPal's dashboard.
+- `PAYPAL_PARTNER_ATTRIBUTION_ID` — Reactant's BN attribution code, backend-only.
 - `PAYPAL_RECEIVING_COUNTRIES` — comma-separated business country allowlist;
   defaults to `US`.
-- `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are legacy backend settings and
-  are not used by AgentCard. AgentCard uses the encrypted PayPal credentials
-  connected by each business; it never falls back to deployment credentials.
+- `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are backend-only platform app
+  credentials. Businesses enter only their PayPal account email, never their
+  app credentials. Use the Sandbox app credentials and Sandbox seller/buyer
+  accounts for testing.
 - The OpenAPI definition is available at `/api/v1/openapi.json` in every
   environment so APIMatic can import the current API contract. Swagger UI at
   `/api/v1/docs` remains disabled in production.
@@ -119,13 +124,13 @@ project before retrying.
   review.
 - Customer replies are durably queued, but their provider-delivery worker is
   not implemented. A `202` response means queued, not delivered.
-- AgentCard supports PayPal Sandbox checkout, customer consent, server-verified
-  capture, signed PayPal webhooks, idempotent partial/full refunds, reconciliation
-  of pending payments, and a durable PDF receipt worker. Receipt delivery is
-  currently available for Telegram conversations; other channels can retrieve
-  an expiring signed receipt URL after generation.
-- AgentCard is disabled until `AGENTCARD_ENABLED=true`, the merchant's own
-  PayPal integration is connected and tested, the business country is
+- The AgentCard checkout engine implements PayPal Sandbox checkout, customer
+  consent, server-verified capture, signed webhooks, refunds, reconciliation,
+  and receipts. Sandbox platform mode uses Reactant's test merchant; real
+  business seller linking is blocked pending PayPal Multiparty Partner
+  Referrals approval.
+- AgentCard is disabled until `AGENTCARD_ENABLED=true`, PayPal seller
+  onboarding is approved and implemented, the business country is
   allowlisted, and the agent's order/PayPal permissions are enabled. These
   controls do not establish PayPal live eligibility or AP2 compliance.
 - Telegram credentials are stored encrypted; connection testing calls `getMe`

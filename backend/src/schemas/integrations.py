@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import AnyHttpUrl, EmailStr, Field
 
 from src.schemas.common import RequestModel
 
@@ -21,6 +21,7 @@ class IntegrationCredentials(RequestModel):
     store_url: AnyHttpUrl | None = None
     mcp_endpoint: AnyHttpUrl | None = None
     shop_domain: str | None = Field(default=None, min_length=1, max_length=255)
+    seller_paypal_email: EmailStr | None = None
     consumer_key: str | None = Field(default=None, min_length=1, max_length=4096)
     consumer_secret: str | None = Field(default=None, min_length=1, max_length=4096)
     access_token: str | None = Field(default=None, min_length=1, max_length=4096)
