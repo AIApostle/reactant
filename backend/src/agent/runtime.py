@@ -373,6 +373,38 @@ def build_business_agent(
             return {"status": "saved"}
 
         tools.extend([search_business_memory, remember_business_fact])
+    if audience == "owner":
+        @tool
+        def list_approval_requests(
+            status_filter: str | None = None,
+            limit: int = 10,
+        ) -> list[dict[str, Any]]:
+            """Read this business's recent approval requests and their current decisions. Use this before answering questions about whether a request was approved or declined."""
+            allowed_statuses = {
+                "pending",
+                "approved",
+                "rejected",
+                "expired",
+                "cancelled",
+            }
+            if status_filter is not None and status_filter not in allowed_statuses:
+                raise ValueError("Choose a valid approval status.")
+            if not 1 <= limit <= 50:
+                raise ValueError("Approval request limit must be between 1 and 50.")
+
+            query = (
+                client.table("approvals")
+                .select(
+                    "id,action_type,status,impact,created_at,decided_at,decision_note"
+                )
+                .eq("business_id", business_id)
+            )
+            if status_filter is not None:
+                query = query.eq("status", status_filter)
+            rows = execute(query.order("created_at", desc=True).limit(limit))
+            return rows if isinstance(rows, list) else []
+
+        tools.append(list_approval_requests)
     if (
         audience == "customer"
         and conversation_id is not None

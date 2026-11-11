@@ -186,6 +186,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 os.environ,
                 {
                     "SUPABASE_URL": "https://example.supabase.co",
+                    "AGENT_MODEL_PROVIDER": "google",
                     key_name: "test-google-key",
                 },
                 clear=True,
@@ -196,8 +197,17 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(settings.model_api_key.get_secret_value(), "test-google-key")
             self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
 
+    def test_openrouter_is_default_agent_provider(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = AgentRuntimeSettings(_env_file=None)
+
+        self.assertEqual(settings.agent_model_provider, "openrouter")
+        self.assertEqual(settings.required_api_key_name, "OPENROUTER_API_KEY")
+        self.assertEqual(settings.selected_model_id(), "openrouter/free")
+
     def test_retired_gemini_model_setting_is_upgraded(self) -> None:
         settings = AgentRuntimeSettings(
+            agent_model_provider="google",
             gemini_model_id="gemini-2.5-flash",
             gemini_vision_model_id="gemini-3.8-flash",
         )
@@ -256,6 +266,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config=None,
                 history=[],
+                audience="customer",
             )
         self.assertEqual(
             sorted(agent.tool_registry.registry.keys()),
@@ -279,6 +290,44 @@ class AgentRuntimeTests(unittest.TestCase):
             )
 
         self.assertIn("create_approval_request", agent.tool_registry.registry)
+        self.assertIn("list_approval_requests", agent.tool_registry.registry)
+
+    def test_owner_agent_can_read_current_approval_status(self) -> None:
+        approved_row = {
+            "id": str(uuid4()),
+            "action_type": "customer_checkout_handoff",
+            "status": "approved",
+            "impact": {"summary": "Grey Vintage Shirt, quantity 2"},
+            "created_at": "2026-11-11T23:00:00+00:00",
+            "decided_at": "2026-11-11T23:10:00+00:00",
+            "decision_note": None,
+        }
+        client = MagicMock()
+        with (
+            patch("src.agent.runtime.get_memory_config", return_value=None),
+            patch("src.agent.runtime.execute", return_value=[approved_row]),
+        ):
+            agent = build_business_agent(
+                client=client,
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store"},
+                agent_config=None,
+                history=[],
+                audience="owner",
+            )
+            approvals = agent.tool_registry.registry[
+                "list_approval_requests"
+            ]._tool_func(status_filter="approved")
+
+        self.assertEqual(approvals, [approved_row])
+        client.table.assert_called_with("approvals")
+        query = client.table.return_value.select.return_value
+        query.eq.assert_called_once_with("business_id", "business-a")
+        query.eq.return_value.eq.assert_called_once_with("status", "approved")
 
     def test_owner_agent_can_create_an_idempotent_approval_request(self) -> None:
         approval_id = str(uuid4())
@@ -596,8 +645,11 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
-    def test_agent_uses_native_gemini_model_by_default(self) -> None:
-        settings = AgentRuntimeSettings(gemini_api_key=SecretStr("test-key"))
+    def test_agent_uses_native_gemini_model_when_selected(self) -> None:
+        settings = AgentRuntimeSettings(
+            agent_model_provider="google",
+            gemini_api_key=SecretStr("test-key"),
+        )
         agent = build_business_agent(
             client=ProductClient(),
             business_id="business-a",

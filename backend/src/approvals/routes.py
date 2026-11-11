@@ -120,6 +120,12 @@ def decide_approval(
             detail={"code": "database_unavailable", "message": "The request could not be completed right now."},
         )
     return ResourceEnvelope(
-        data=ApprovalResponse(**row),
+        data=ApprovalResponse.model_validate(
+            {
+                field: value
+                for field, value in row.items()
+                if field in ApprovalResponse.model_fields
+            }
+        ),
         request_id=request.state.request_id,
     )

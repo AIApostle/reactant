@@ -57,12 +57,13 @@ PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
 PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true
 AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
-AGENT_MODEL_PROVIDER=google
-GEMINI_API_KEY=<server-only-google-ai-studio-key>
-GEMINI_MODEL_ID=gemini-3.6-flash
-# Optional OpenRouter alternative:
-# AGENT_MODEL_PROVIDER=openrouter
-# OPENROUTER_API_KEY=<server-only-openrouter-key>
+AGENT_MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=<server-only-openrouter-key>
+OPENROUTER_MODEL_ID=openrouter/free
+# Optional Google alternative:
+# AGENT_MODEL_PROVIDER=google
+# GEMINI_API_KEY=<server-only-google-ai-studio-key>
+# GEMINI_MODEL_ID=gemini-3.6-flash
 ```
 
 Generate `CREDENTIALS_ENCRYPTION_KEY` with:
@@ -90,16 +91,14 @@ doesn't change the PayPal Developer Dashboard setting. For Sandbox, use the
 Sandbox app credentials, BN code, and Sandbox API URL; for production, use the
 Live app credentials, BN code, and Live API URL.
 
-Strands uses Google's native Gemini provider by default. Create a key in
-[Google AI Studio](https://aistudio.google.com/app/apikey) and add it to the
-backend environment as `GEMINI_API_KEY`; keep it off the frontend. Set
-`AGENT_MODEL_PROVIDER=google` and `GEMINI_MODEL_ID=gemini-3.6-flash`. OpenRouter
-remains supported; set `AGENT_MODEL_PROVIDER=openrouter` to use
-`OPENROUTER_API_KEY` instead.
+Strands uses OpenRouter by default. Add `OPENROUTER_API_KEY` to the backend
+environment and set `AGENT_MODEL_PROVIDER=openrouter`; choose an available model
+with `OPENROUTER_MODEL_ID` if the `openrouter/free` router is unsuitable. Never
+expose the key to the frontend. Google's native Gemini provider remains
+available by setting `AGENT_MODEL_PROVIDER=google`, `GEMINI_API_KEY`, and
+optionally `GEMINI_MODEL_ID`.
 
-The Gemini model can temporarily return `503 UNAVAILABLE` during capacity
-spikes. The default is the stable Gemini 3.6 Flash model; if Render has an
-explicit `GEMINI_MODEL_ID`, set it to `gemini-3.6-flash` as well.
+The OpenRouter provider can be changed without removing Google Gemini support.
 
 ### Vercel frontend environment
 

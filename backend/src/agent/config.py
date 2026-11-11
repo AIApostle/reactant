@@ -14,7 +14,7 @@ class AgentRuntimeSettings(BaseSettings):
     )
 
     strands_agent_enabled: bool = False
-    agent_model_provider: Literal["google", "openrouter"] = "google"
+    agent_model_provider: Literal["google", "openrouter"] = "openrouter"
     gemini_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),

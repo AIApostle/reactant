@@ -48,15 +48,15 @@ Additional configuration:
   `SUPABASE_SECRET_KEY` and the selected model provider's API key. Keep
   disabled until these credentials and the Supabase
   migration are configured.
-- `AGENT_MODEL_PROVIDER` — `google` (default) or `openrouter`.
+- `AGENT_MODEL_PROVIDER` — `openrouter` (default) or `google`.
 - `GEMINI_API_KEY` — backend-only Google AI Studio key for Strands' native
   Gemini provider. `GOOGLE_API_KEY` is also accepted. Never expose the key to
   the frontend.
 - `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` — optional Gemini model IDs;
   both default to the stable `gemini-3.6-flash` model. Older 2.5 Flash and
   3.8 Flash values are normalized to 3.6 Flash.
-- `OPENROUTER_API_KEY` — backend-only OpenRouter key, used only when
-  `AGENT_MODEL_PROVIDER=openrouter`. The OpenRouter provider remains available.
+- `OPENROUTER_API_KEY` — backend-only OpenRouter key, used when
+  `AGENT_MODEL_PROVIDER=openrouter`.
 - `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs
   for the OpenRouter provider.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
