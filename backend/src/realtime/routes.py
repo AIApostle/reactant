@@ -65,15 +65,28 @@ def create_realtime_ticket(
             )
         )
     except HTTPException as error:
-        if error.status_code != status.HTTP_403_FORBIDDEN:
-            raise
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "realtime_ticket_database_migration_required",
-                "message": "Realtime ticket creation is not available. Apply the latest Supabase database migrations and retry.",
-            },
-        ) from error
+        error_code = (
+            error.detail.get("code")
+            if isinstance(error.detail, dict)
+            else None
+        )
+        if error.status_code == status.HTTP_403_FORBIDDEN:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "realtime_ticket_database_migration_required",
+                    "message": "Realtime ticket creation is not available. Apply Supabase migrations 0009 and 0010, then retry.",
+                },
+            ) from error
+        if error_code == "database_schema_outdated":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "realtime_ticket_rpc_unavailable",
+                    "message": "The create_realtime_ticket database function is missing or not in the PostgREST schema cache. Apply migration 0010 and reload the schema cache.",
+                },
+            ) from error
+        raise
     scheme = "wss" if request.url.scheme == "https" else "ws"
     websocket_url = f"{scheme}://{request.url.netloc}/api/v1/realtime/ws"
     return ResourceEnvelope(

@@ -195,6 +195,15 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(settings.model_api_key.get_secret_value(), "test-google-key")
             self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
 
+    def test_retired_gemini_model_setting_is_upgraded(self) -> None:
+        settings = AgentRuntimeSettings(
+            gemini_model_id="gemini-2.5-flash",
+            gemini_vision_model_id="models/gemini-2.5-flash",
+        )
+
+        self.assertEqual(settings.selected_model_id(), "gemini-3.8-flash")
+        self.assertEqual(settings.selected_model_id(vision=True), "gemini-3.8-flash")
+
     def test_system_prompt_contains_business_context_and_safety_rules(self) -> None:
         prompt = build_business_system_prompt(
             business={
@@ -376,7 +385,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-2.5-flash")
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:

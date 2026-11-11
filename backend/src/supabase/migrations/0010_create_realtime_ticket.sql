@@ -47,3 +47,5 @@ revoke all on function public.create_realtime_ticket(uuid, text, timestamptz)
 from public, anon, authenticated;
 grant execute on function public.create_realtime_ticket(uuid, text, timestamptz)
 to authenticated;
+
+notify pgrst, 'reload schema';

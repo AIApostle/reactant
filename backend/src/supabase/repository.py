@@ -18,12 +18,15 @@ def execute_response(query: Any) -> Any:
         return query.execute()
     except APIError as error:
         logger.error("Database request failed postgres_code=%s", error.code)
-        if error.code in {"42703", "PGRST204", "PGRST205"}:
+        if error.code in {"42703", "PGRST202", "PGRST204", "PGRST205"}:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "code": "database_schema_outdated",
-                    "message": "The workspace database schema is out of date. Apply the latest Supabase migrations and retry.",
+                    "message": (
+                        "The workspace database schema or RPC schema cache is out of date. "
+                        "Apply the latest Supabase migrations, reload the PostgREST schema cache, and retry."
+                    ),
                 },
             ) from error
         if error.code == "23505":

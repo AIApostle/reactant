@@ -23,6 +23,23 @@ class DatabaseSchemaErrorTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(raised.exception.detail["code"], "database_schema_outdated")
 
+    def test_missing_rpc_is_reported_as_outdated_schema(self) -> None:
+        class Query:
+            def execute(self):
+                raise APIError(
+                    {
+                        "code": "PGRST202",
+                        "message": "Could not find the function public.create_realtime_ticket",
+                    }
+                )
+
+        with self.assertRaises(HTTPException) as raised:
+            execute_response(Query())
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(raised.exception.detail["code"], "database_schema_outdated")
+        self.assertIn("schema cache", raised.exception.detail["message"])
+
 
 class MaybeSingleQueryTests(unittest.TestCase):
     def test_execute_preserves_no_rows_result_from_maybe_single_query(self) -> None:

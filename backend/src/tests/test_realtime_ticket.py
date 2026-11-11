@@ -65,6 +65,35 @@ class RealtimeTicketTests(unittest.TestCase):
             "realtime_ticket_database_migration_required",
         )
 
+    def test_ticket_returns_specific_code_when_rpc_is_missing_from_schema_cache(self) -> None:
+        request = SimpleNamespace(
+            url=SimpleNamespace(scheme="https", netloc="api.example.com"),
+            state=SimpleNamespace(request_id="request-id"),
+        )
+        with (
+            patch("src.realtime.routes.get_business_membership"),
+            patch(
+                "src.realtime.routes.execute",
+                side_effect=HTTPException(
+                    status_code=503,
+                    detail={"code": "database_schema_outdated"},
+                ),
+            ),
+            self.assertRaises(HTTPException) as raised,
+        ):
+            create_realtime_ticket(
+                UUID("ec1bdf46-3672-443a-b3d6-0d8c1252ddac"),
+                request,
+                SimpleNamespace(id=UUID("6ae108fb-138b-4ce8-84cf-c42cb80926ac")),
+                MagicMock(),
+            )
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(
+            raised.exception.detail["code"],
+            "realtime_ticket_rpc_unavailable",
+        )
+
 
 class ManualSandboxCheckoutTests(unittest.TestCase):
     def test_owner_can_create_sandbox_checkout_without_agent_invocation(self) -> None:
