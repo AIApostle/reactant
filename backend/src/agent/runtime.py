@@ -41,16 +41,58 @@ PRODUCT_IMAGE_QUERY_STOP_WORDS = {
     "this", "that", "to", "want", "you", "one", "product", "products", "item",
     "items", "available",
 }
+INTERNAL_UUID_PATTERN = re.compile(
+    r"\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b",
+    re.I,
+)
+LABELED_INTERNAL_ID_PATTERN = re.compile(
+    r"\b(?:internal[\s_-]+)?(?:product|catalog|inventory)[\s_-]*"
+    r"(?:id|identifier|reference)\s*[:#]?\s*[a-z0-9_-]{4,}\b",
+    re.I,
+)
 
 
 def sanitize_customer_response(text: str) -> str:
-    """Keep customer replies readable and prevent private media URLs leaking into text."""
+    """Keep customer replies readable and hide internal media URLs and identifiers."""
     cleaned = re.sub(r"\[([^\]]+)\]\(\s*https?://[^)\s]+\s*\)", r"\1", text)
     cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = LABELED_INTERNAL_ID_PATTERN.sub("", cleaned)
+    cleaned = INTERNAL_UUID_PATTERN.sub("", cleaned)
     cleaned = re.sub(r"(\*\*|__|`)", "", cleaned)
     cleaned = re.sub(r"(?im)^\s*(?:[-*]\s*)?(?:image|photo|picture)\s*:\s*.*$", "", cleaned)
     cleaned = re.sub(r"^\s*#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def customer_catalog_product(product: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": product["name"],
+        "description": product.get("description", ""),
+        "price_minor": product["price_minor"],
+        "currency": product["currency"],
+        "stock_quantity": product["stock_quantity"],
+        "image_available": bool(product.get("image_urls")),
+    }
+
+
+def resolve_customer_checkout_items(
+    items: list[dict[str, Any]],
+    catalog_product_ids: dict[str, set[str]],
+) -> list[AgentCardItemRequest]:
+    resolved: list[AgentCardItemRequest] = []
+    for item in items:
+        product_name = item.get("product_name")
+        if not isinstance(product_name, str) or not product_name.strip():
+            raise ValueError("Choose a product by its catalog name.")
+        matching_ids = catalog_product_ids.get(product_name.strip().casefold(), set())
+        if len(matching_ids) != 1:
+            raise ValueError("Search for a specific catalog product before preparing checkout.")
+        resolved.append(
+            AgentCardItemRequest.model_validate(
+                {"product_id": next(iter(matching_ids)), "quantity": item.get("quantity")}
+            )
+        )
+    return resolved
 
 
 def _product_image_urls(
@@ -260,11 +302,17 @@ def build_business_agent(
     selected_product_images: list[dict[str, Any]] | None = None,
     vision_enabled: bool = False,
 ) -> Agent:
+    catalog_product_ids: dict[str, set[str]] = {}
+
     @tool
     def search_business_products(query: str, limit: int = 5) -> list[dict[str, Any]]:
-        """Find active catalog products by name. When customer-facing product photos are available, the channel can send them with the reply; never claim a photo was sent unless the channel confirms delivery."""
+        """Find active catalog products by name. Product IDs are internal and must never be shown to customers. When customer-facing photos are available, the channel can send them with the reply."""
         products = find_business_products(client, business_id, query, limit)
         if audience == "customer":
+            for product in products:
+                catalog_product_ids.setdefault(
+                    str(product["name"]).strip().casefold(), set()
+                ).add(str(product["product_id"]))
             if selected_product_images is not None:
                 selected_product_images[:] = [
                     {
@@ -274,14 +322,7 @@ def build_business_agent(
                     for product in products
                     if product.get("image_urls")
                 ]
-            return [
-                {
-                    **product,
-                    "image_urls": [],
-                    "image_available": bool(product.get("image_urls")),
-                }
-                for product in products
-            ]
+            return [customer_catalog_product(product) for product in products]
         return products
 
     @tool
@@ -327,11 +368,11 @@ def build_business_agent(
         def create_agentcard_transaction(
             items: list[dict[str, Any]],
         ) -> dict[str, Any]:
-            """Prepare a secure checkout from catalog product IDs and quantities after the customer explicitly agrees to buy. The server validates current prices and stock and calculates the total."""
-            validated_items = [
-                AgentCardItemRequest.model_validate(item)
-                for item in items
-            ]
+            """Prepare a secure checkout from exact catalog product names and quantities after the customer explicitly agrees to buy. Search the catalog in this agent turn first. The server validates current prices and stock and calculates the total."""
+            validated_items = resolve_customer_checkout_items(
+                items,
+                catalog_product_ids,
+            )
             result = create_agentcard_transaction_service(
                 client=client,
                 business_id=business_id,

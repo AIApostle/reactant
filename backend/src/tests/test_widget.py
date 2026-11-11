@@ -94,6 +94,13 @@ class WidgetSessionTests(unittest.TestCase):
                 customer_reference="visitor-1",
             ),
         )
+        self.assertNotEqual(
+            first,
+            memory_namespace(
+                first_business,
+                audience="owner",
+            ),
+        )
 
     def test_website_origin_normalizes_default_port_and_case(self) -> None:
         body = IntegrationCreate.model_validate(

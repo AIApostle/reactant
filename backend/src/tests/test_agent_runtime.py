@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from datetime import datetime, timezone
 from time import sleep
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -12,10 +13,13 @@ from src.agent import worker as agent_worker
 from src.agent.config import AgentRuntimeSettings
 from src.agent.runtime import (
     build_business_agent,
+    customer_catalog_product,
     find_business_products,
     product_image_attachments,
     product_image_query,
     product_image_reply,
+    resolve_customer_checkout_items,
+    sanitize_customer_response,
 )
 from src.agent.prompts import build_business_system_prompt
 from src.owner_assistant import routes as owner_assistant_routes
@@ -219,6 +223,30 @@ class AgentRuntimeTests(unittest.TestCase):
             ["search_business_products", "search_public_web"],
         )
 
+    def test_customer_memory_tools_are_not_registered_without_opt_in(self) -> None:
+        with (
+            patch("src.agent.runtime.get_memory_config") as get_memory,
+            patch(
+                "src.agent.runtime.get_supabase_settings",
+                return_value=SimpleNamespace(agentcard_enabled=False),
+            ),
+        ):
+            agent = build_business_agent(
+                client=ProductClient(),
+                business_id="business-a",
+                settings=AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key")),
+                business={"name": "Store", "country": "US", "currency": "USD"},
+                agent_config=None,
+                history=[],
+                audience="customer",
+                memory_customer_reference="visitor-1",
+                memory_opt_in=False,
+            )
+
+        get_memory.assert_not_called()
+        self.assertNotIn("search_business_memory", agent.tool_registry.registry)
+        self.assertNotIn("remember_business_fact", agent.tool_registry.registry)
+
     def test_product_image_query_uses_recent_product_when_customer_is_vague(self) -> None:
         query = product_image_query(
             "Can I see a picture of the product you guys have (my message)?",
@@ -243,6 +271,52 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("included a photo", product_image_reply("Recommended.", attachments, explicitly_requested=False))
         self.assertIn("couldn't send", product_image_reply("Recommended.", [], explicitly_requested=True, delivery_failed=True))
         self.assertIn("couldn't find", product_image_reply("Recommended.", [], explicitly_requested=True))
+
+    def test_customer_catalog_result_does_not_expose_internal_product_id_or_image_url(self) -> None:
+        result = customer_catalog_product(
+            {
+                "product_id": "d7356ad3-ba69-46fd-91d1-daebf6ab7142",
+                "name": "Shoes",
+                "description": "Canvas shoes",
+                "price_minor": 100,
+                "currency": "USD",
+                "stock_quantity": 20,
+                "image_urls": ["https://storage.example/private-photo.png"],
+            }
+        )
+
+        self.assertNotIn("product_id", result)
+        self.assertNotIn("image_urls", result)
+        self.assertTrue(result["image_available"])
+        self.assertEqual(result["name"], "Shoes")
+
+    def test_customer_checkout_resolves_only_products_from_catalog_search(self) -> None:
+        items = resolve_customer_checkout_items(
+            [{"product_name": "Shoes", "quantity": 2}],
+            {"shoes": {"d7356ad3-ba69-46fd-91d1-daebf6ab7142"}},
+        )
+
+        self.assertEqual(str(items[0].product_id), "d7356ad3-ba69-46fd-91d1-daebf6ab7142")
+        self.assertEqual(items[0].quantity, 2)
+
+    def test_customer_checkout_rejects_ambiguous_names_and_untrusted_ids(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_customer_checkout_items(
+                [{"product_name": "Shoes", "quantity": 1}],
+                {"shoes": {"product-id-a", "product-id-b"}},
+            )
+        with self.assertRaises(ValueError):
+            resolve_customer_checkout_items(
+                [{"product_id": "d7356ad3-ba69-46fd-91d1-daebf6ab7142", "quantity": 1}],
+                {"shoes": {"d7356ad3-ba69-46fd-91d1-daebf6ab7142"}},
+            )
+
+    def test_customer_response_sanitizer_removes_internal_product_ids(self) -> None:
+        response = sanitize_customer_response(
+            "Shoes (product_id: d7356ad3-ba69-46fd-91d1-daebf6ab7142)."
+        )
+        self.assertNotIn("d7356ad3-ba69-46fd-91d1-daebf6ab7142", response)
+        self.assertNotIn("product ID", response)
 
     def test_agent_uses_openrouter_free_model_with_configured_api_key(self) -> None:
         settings = AgentRuntimeSettings(openrouter_api_key=SecretStr("test-key"))
