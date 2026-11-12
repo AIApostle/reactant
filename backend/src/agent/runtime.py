@@ -544,6 +544,7 @@ def build_business_agent(
     idempotency_key: str | None = None,
     agent_run_id: str | None = None,
     created_checkout_urls: list[str] | None = None,
+    checkout_errors: list[str] | None = None,
     selected_product_images: list[dict[str, Any]] | None = None,
     vision_enabled: bool = False,
 ) -> Agent:
@@ -942,6 +943,8 @@ def build_business_agent(
                     business_id,
                     error_code,
                 )
+                if checkout_errors is not None:
+                    checkout_errors.append(error_code)
                 raise
             checkout_url = result["checkout_url"]
             created_checkout_urls.append(checkout_url)

@@ -703,6 +703,7 @@ def _process_telegram_update(
         rows=history_rows,
     )
     created_checkout_urls: list[str] = []
+    checkout_errors: list[str] = []
     selected_product_images: list[dict[str, Any]] = []
     agent = build_business_agent(
         client=client,
@@ -717,15 +718,44 @@ def _process_telegram_update(
         customer_reference=chat_id,
         idempotency_key=f"telegram:{channel_id}:{update_id}",
         created_checkout_urls=created_checkout_urls,
+        checkout_errors=checkout_errors,
         selected_product_images=selected_product_images,
         vision_enabled=bool(customer_images),
     )
-    response_text = invoke_business_agent(
-        agent,
-        text,
-        audience="customer",
-        images=customer_images,
-    )
+    try:
+        response_text = invoke_business_agent(
+            agent,
+            text,
+            audience="customer",
+            images=customer_images,
+        )
+    except Exception as error:
+        logger.error(
+            "Telegram customer agent invocation failed business_id=%s conversation_id=%s exception_type=%s",
+            business_id,
+            conversation["id"],
+            type(error).__name__,
+        )
+        if created_checkout_urls:
+            response_text = (
+                "Your secure checkout is ready. Please review the items and total "
+                "on the checkout page before paying."
+            )
+        elif checkout_errors and checkout_errors[-1] == "paypal_merchant_ineligible":
+            response_text = (
+                "I couldn't prepare checkout because the business's PayPal receiving "
+                "country is not enabled for this environment. Please contact the store team."
+            )
+        elif checkout_errors:
+            response_text = (
+                "I couldn't prepare a secure checkout right now. No order or payment "
+                "was created. Please try again later or contact the store team."
+            )
+        else:
+            response_text = (
+                "I'm temporarily unable to complete that reply. No checkout or payment "
+                "was created. Please try again shortly or contact the store team."
+            )
     image_requested = _wants_product_images(text)
     image_products = selected_product_images
     if image_requested:

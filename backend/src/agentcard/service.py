@@ -111,7 +111,11 @@ def _verify_paypal_eligibility(client: Client, business_id: str) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "code": "paypal_merchant_ineligible",
-                "message": "PayPal receiving payments is not enabled for this business country.",
+                "message": (
+                    "PayPal receiving is not enabled for this business country in this "
+                    "deployment. Add the country to PAYPAL_RECEIVING_COUNTRIES; Nigeria "
+                    "is allowed only when PayPal Sandbox is configured."
+                ),
             },
         )
 

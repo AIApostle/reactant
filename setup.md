@@ -59,13 +59,17 @@ PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
 PUBLIC_API_BASE_URL=https://reactant.onrender.com
 PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
-PAYPAL_RECEIVING_COUNTRIES=US
+PAYPAL_RECEIVING_COUNTRIES=US,NG
 STRANDS_AGENT_ENABLED=true
 AGENT_MODEL_PROVIDER=openrouter
 OPENROUTER_API_KEY=<backend-only-openrouter-key>
 GEMINI_API_KEY=<backend-only-google-ai-studio-key>
 GEMINI_MODEL_ID=gemini-3.6-flash # Gemini failover when both keys are configured
 ```
+
+Keep only the merchant countries you intend to support in
+`PAYPAL_RECEIVING_COUNTRIES`. Nigeria (`NG`) is accepted for Sandbox testing
+only; the backend blocks Nigerian businesses when PayPal Live is configured.
 
 The Render service's public API origin is:
 
