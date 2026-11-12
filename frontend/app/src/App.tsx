@@ -2215,7 +2215,8 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       )
       setIntegrations((items) => [connected, ...items.filter((item) => item.id !== connected.id)])
       setPaypalSellerEmail('')
-      notify('Reactant’s PayPal partner app was verified. Seller onboarding starts after the first payment.')
+      setDialogProvider(null)
+      notify('PayPal connection verified. Seller onboarding starts after the first payment.')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The business PayPal account could not be connected.')
     } finally {
@@ -2372,7 +2373,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
                   ? 'Legacy Sandbox connection'
                   : null
           return (
-            <article className={`panel integration-card ${provider.key === 'paypal' ? 'integration-card-paypal' : ''} ${connected ? 'integration-connected' : ''}`} key={provider.key}>
+            <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={provider.key}>
               <div className="integration-card-top"><span className={`integration-icon integration-icon-${provider.provider.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{provider.category}</Badge></div>
               <h2>{provider.provider}</h2>
               <p>{provider.description}</p>
@@ -2442,25 +2443,10 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                         {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => setIntegrationToDisconnect(connection)}>Disconnect</Button>}
                       </div>
                     </>
-                  : provider.key === 'paypal' ? (
-                    <form className="integration-setup-details" onSubmit={(event) => void connectPaypalSeller(event)}>
-                      <label className="field-label" htmlFor="paypal-seller-email">PayPal seller email</label>
-                      <input
-                        className="integration-webhook-input"
-                        id="paypal-seller-email"
-                        type="email"
-                        autoComplete="email"
-                        required
-                        value={paypalSellerEmail}
-                        onChange={(event) => setPaypalSellerEmail(event.target.value)}
-                        placeholder="seller@example.com"
-                      />
-                      <small>Use the seller’s Sandbox email while testing.</small>
-                      <Button type="submit" disabled={saving || !paypalSellerEmail.trim()}>
-                        {saving ? 'Connecting...' : 'Connect seller'}
-                      </Button>
-                    </form>
-                  ) : <Button onClick={() => { setError(''); setDialogProvider(provider.provider) }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
+                  : <Button onClick={() => {
+                    setError('')
+                    setDialogProvider(provider.provider)
+                  }}>{provider.key === 'website_chat' ? 'Add custom' : 'Connect'}</Button>}
                 {provider.key === 'website_chat' && connection && (
                   <Button variant="soft" color="gray" onClick={() => { setError(''); setDialogProvider('Website chat') }}>Add custom</Button>
                 )}
@@ -2477,12 +2463,14 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
           )
         })}
       </div>
-      {error && <p className="api-error" role="alert">{error}</p>}
+      {error && !dialogProvider && <p className="api-error" role="alert">{error}</p>}
       <Dialog.Root open={dialogProvider !== null} onOpenChange={(open) => { if (!open && !saving) setDialogProvider(null) }}>
         <Dialog.Content className="dialog-content">
           <Dialog.Title className="dialog-title">Connect {dialogProvider}</Dialog.Title>
           <Dialog.Description className="dialog-description">
-            {dialogProvider === 'WooCommerce'
+            {dialogProvider === 'PayPal'
+              ? 'Connect the PayPal account that should receive customer payments.'
+              : dialogProvider === 'WooCommerce'
               ? 'Use an HTTPS store URL and WooCommerce REST API keys with only the permissions Reactant needs.'
               : dialogProvider === 'Shopify'
                 ? 'Enter your store domain. Shopify will securely ask you to approve the connection.'
@@ -2492,8 +2480,30 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                 ? 'Register the exact site origin. Use HTTPS in production; localhost is accepted for local testing.'
                   : 'Connect the service using its account authorization.'}
           </Dialog.Description>
-          <form className="connection-form" onSubmit={(event) => void createConnection(event)}>
-            {dialogProvider === 'Website chat' ? (
+          <form
+            className="connection-form"
+            onSubmit={(event) => void (dialogProvider === 'PayPal'
+              ? connectPaypalSeller(event)
+              : createConnection(event))}
+          >
+            {dialogProvider === 'PayPal' ? (
+              <>
+                <label className="field-label" htmlFor="paypal-seller-email">PayPal seller email</label>
+                <TextField.Root
+                  id="paypal-seller-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={paypalSellerEmail}
+                  onChange={(event) => setPaypalSellerEmail(event.target.value)}
+                  placeholder="seller@example.com"
+                  aria-describedby="paypal-seller-email-note"
+                />
+                <p className="form-note" id="paypal-seller-email-note">
+                  For Sandbox testing, enter the seller email from your PayPal Developer Dashboard. Seller onboarding starts after the first payment.
+                </p>
+              </>
+            ) : dialogProvider === 'Website chat' ? (
               <>
                 <label className="field-label" htmlFor="connection-website-origin">Website origin</label>
                 <TextField.Root id="connection-website-origin" name="allowed_origin" type="url" placeholder="https://shop.example.com" pattern="https://.*|http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?" required />
@@ -2525,7 +2535,18 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
             {error && <p className="api-error" role="alert">{error}</p>}
             <div className="dialog-actions">
               <Button type="button" variant="soft" color="gray" disabled={saving} onClick={() => setDialogProvider(null)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Connecting...' : dialogProvider === 'Shopify' ? 'Continue to Shopify' : 'Save credentials'}</Button>
+              <Button
+                type="submit"
+                disabled={saving || (dialogProvider === 'PayPal' && !paypalSellerEmail.trim())}
+              >
+                {saving
+                  ? 'Connecting...'
+                  : dialogProvider === 'PayPal'
+                    ? 'Connect seller'
+                    : dialogProvider === 'Shopify'
+                      ? 'Continue to Shopify'
+                      : 'Save credentials'}
+              </Button>
             </div>
           </form>
         </Dialog.Content>
