@@ -201,13 +201,13 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(settings.model_api_key.get_secret_value(), "test-google-key")
             self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
 
-    def test_google_is_default_agent_provider(self) -> None:
+    def test_openrouter_is_default_agent_provider(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = AgentRuntimeSettings(_env_file=None)
 
-        self.assertEqual(settings.agent_model_provider, "google")
-        self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
-        self.assertEqual(settings.selected_model_id(), "gemini-3.6-flash")
+        self.assertEqual(settings.agent_model_provider, "openrouter")
+        self.assertEqual(settings.required_api_key_name, "OPENROUTER_API_KEY")
+        self.assertEqual(settings.selected_model_id(), "openrouter/free")
 
     def test_retired_gemini_model_setting_is_upgraded(self) -> None:
         settings = AgentRuntimeSettings(
@@ -885,7 +885,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIsInstance(agent.model.primary, OpenAIModel)
         self.assertIsInstance(agent.model.fallback, GeminiModel)
 
-    def test_agent_configures_gemini_to_openrouter_failover(self) -> None:
+    def test_gemini_primary_does_not_fall_back_to_openrouter(self) -> None:
         settings = AgentRuntimeSettings(
             _env_file=None,
             agent_model_provider="google",
@@ -901,15 +901,13 @@ class AgentRuntimeTests(unittest.TestCase):
             history=[],
         )
 
-        self.assertIsInstance(agent.model, FailoverModel)
-        self.assertIsInstance(agent.model.primary, GeminiModel)
-        self.assertIsInstance(agent.model.fallback, OpenAIModel)
+        self.assertIsInstance(agent.model, GeminiModel)
 
     def test_agent_uses_fallback_when_primary_key_is_missing(self) -> None:
         settings = AgentRuntimeSettings(
             _env_file=None,
-            agent_model_provider="google",
-            openrouter_api_key=SecretStr("openrouter-key"),
+            agent_model_provider="openrouter",
+            gemini_api_key=SecretStr("gemini-key"),
         )
         agent = build_business_agent(
             client=ProductClient(),
@@ -920,7 +918,7 @@ class AgentRuntimeTests(unittest.TestCase):
             history=[],
         )
 
-        self.assertIsInstance(agent.model, OpenAIModel)
+        self.assertIsInstance(agent.model, GeminiModel)
 
     def test_failover_discards_partial_primary_stream_before_retry(self) -> None:
         class FakeModel:

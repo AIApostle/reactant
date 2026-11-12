@@ -965,16 +965,18 @@ def build_business_agent(
             ",".join(checkout_tool_reasons),
         )
 
-    fallback_provider = "openrouter" if settings.agent_model_provider == "google" else "google"
+    fallback_provider = (
+        "google" if settings.agent_model_provider != "google" else None
+    )
     primary_model = _create_provider_model(
         settings,
         settings.agent_model_provider,
         vision=vision_enabled,
     )
-    fallback_model = _create_provider_model(
-        settings,
-        fallback_provider,
-        vision=vision_enabled,
+    fallback_model = (
+        _create_provider_model(settings, fallback_provider, vision=vision_enabled)
+        if fallback_provider is not None
+        else None
     )
     if primary_model is None and fallback_model is None:
         raise RuntimeError(
@@ -989,7 +991,7 @@ def build_business_agent(
             fallback_provider,
         )
         model = fallback_model
-    elif fallback_model is None:
+    elif fallback_model is None or fallback_provider is None:
         model = primary_model
     else:
         model = FailoverModel(

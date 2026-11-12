@@ -61,9 +61,10 @@ PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US
 STRANDS_AGENT_ENABLED=true
-AGENT_MODEL_PROVIDER=google
+AGENT_MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=<backend-only-openrouter-key>
 GEMINI_API_KEY=<backend-only-google-ai-studio-key>
-GEMINI_MODEL_ID=gemini-3.6-flash
+GEMINI_MODEL_ID=gemini-3.6-flash # Gemini failover when both keys are configured
 ```
 
 The Render service's public API origin is:
