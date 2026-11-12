@@ -330,7 +330,7 @@ def create_paypal_order(
             "application_context": {
                 "brand_name": business_name[:127],
                 "user_action": "PAY_NOW",
-                "return_url": f"{checkout_url}?paypal_order_id={{CHECKOUT.ORDER.ID}}",
+                "return_url": f"{checkout_url}?paypal_return=1",
                 "cancel_url": f"{checkout_url}?paypal_cancelled=1",
             },
         },

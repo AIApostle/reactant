@@ -123,7 +123,7 @@ export default function AgentCardCheckout() {
   }, [loadCheckout])
 
   useEffect(() => {
-    const providerOrderId = searchParams.get('paypal_order_id')
+    const providerOrderId = searchParams.get('token') ?? searchParams.get('paypal_order_id')
     if (!providerOrderId || captureStarted.current) return
     captureStarted.current = true
     let active = true

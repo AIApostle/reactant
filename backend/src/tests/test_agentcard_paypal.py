@@ -302,6 +302,14 @@ class PayPalAmountTests(unittest.TestCase):
             purchase_unit["payment_instruction"],
             {"disbursement_mode": "INSTANT"},
         )
+        self.assertEqual(
+            payload["application_context"]["return_url"],
+            "https://shop.example/checkout/token?paypal_return=1",
+        )
+        self.assertNotIn(
+            "{",
+            payload["application_context"]["return_url"],
+        )
 
     @patch("src.agentcard.paypal._access_token", return_value="access-token")
     @patch("src.agentcard.paypal.httpx.Client")
