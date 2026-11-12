@@ -1023,6 +1023,15 @@ def invoke_business_agent(
             raise
     response = str(result).strip()
     if not response:
+        logger.error(
+            "Agent returned no text after invocation audience=%s",
+            audience,
+        )
+        if audience == "customer":
+            return (
+                "I couldn't complete that reply just now. Please try again, "
+                "or contact the store team for help."
+            )
         raise RuntimeError("The agent returned no text response.")
     response = sanitize_customer_response(response) if audience == "customer" else response
     return response[:10000]

@@ -252,7 +252,14 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("explicitly asks to see a photo", customer_prompt)
         self.assertIn("list_available_business_products", customer_prompt)
         self.assertIn("calculate_customer_order_total", customer_prompt)
-        self.assertIn("expected to help complete checkout", customer_prompt)
+        self.assertIn('"product_name": "Exact catalog product name"', customer_prompt)
+        self.assertIn("Never calculate, estimate, round, convert currencies, or", customer_prompt)
+        self.assertIn("ask the customer", customer_prompt)
+        self.assertIn("Do not create checkout until they confirm", customer_prompt)
+        self.assertIn(
+            "expected to help complete checkout",
+            " ".join(customer_prompt.split()),
+        )
         owner_prompt = build_business_system_prompt(
             business={"name": "Store"},
             agent_config=None,
@@ -733,6 +740,15 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(response, "I couldn't prepare checkout right now.")
         self.assertEqual(len(calls), 2)
         self.assertIn("Do not repeat actions", calls[1][0])
+
+    def test_customer_agent_returns_explicit_message_if_model_returns_no_text(self) -> None:
+        response = invoke_business_agent(
+            lambda *_args, **_kwargs: "",
+            "Can we check out?",
+            audience="customer",
+        )
+
+        self.assertIn("couldn't complete that reply", response)
 
     def test_customer_checkout_resolves_only_products_from_catalog_search(self) -> None:
         items = resolve_customer_checkout_items(
