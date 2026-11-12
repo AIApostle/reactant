@@ -18,7 +18,7 @@ from strands.models.model import Model
 from strands.models.openai import OpenAIModel
 from strands.types.agent import Limits
 from strands.types.content import Messages, SystemContentBlock
-from strands.types.exceptions import ModelThrottledException
+from strands.types.exceptions import MaxTokensReachedException, ModelThrottledException
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolSpec
 from supabase import Client
@@ -198,11 +198,22 @@ def customer_catalog_product(product: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": product["name"],
         "description": product.get("description", ""),
-        "price_minor": product["price_minor"],
+        "unit_price": format_minor_amount(
+            product["price_minor"], product["currency"]
+        ),
         "currency": product["currency"],
         "stock_quantity": product["stock_quantity"],
         "image_available": bool(product.get("image_urls")),
     }
+
+
+def format_minor_amount(amount_minor: int, currency: str) -> str:
+    amount = abs(amount_minor)
+    sign = "-" if amount_minor < 0 else ""
+    return (
+        f"{currency.upper()} {sign}{amount // 100:,}."
+        f"{amount % 100:02d}"
+    )
 
 
 def resolve_customer_checkout_items(
@@ -490,14 +501,17 @@ def build_business_agent(
     vision_enabled: bool = False,
 ) -> Agent:
     catalog_product_ids: dict[str, set[str]] = {}
+    catalog_products: dict[str, dict[str, Any]] = {}
 
     def register_customer_catalog_products(
         products: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         for product in products:
+            product_id = str(product["product_id"])
+            catalog_products[product_id] = product
             catalog_product_ids.setdefault(
                 str(product["name"]).strip().casefold(), set()
-            ).add(str(product["product_id"]))
+            ).add(product_id)
         if audience == "customer":
             return [customer_catalog_product(product) for product in products]
         return products
@@ -558,6 +572,64 @@ def build_business_agent(
         return register_customer_catalog_products(products)
 
     @tool
+    def calculate_customer_order_total(
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Calculate exact item subtotals from products searched or listed in this turn. Use this instead of doing price arithmetic mentally. Checkout remains the final source of truth."""
+        if not items or len(items) > 100:
+            raise ValueError("Provide between 1 and 100 catalog items.")
+
+        calculated_items: list[dict[str, Any]] = []
+        subtotal_minor = 0
+        currency: str | None = None
+        for item in items:
+            product_name = item.get("product_name")
+            if not isinstance(product_name, str) or not product_name.strip():
+                raise ValueError("Choose each product by its catalog name.")
+            matching_ids = catalog_product_ids.get(product_name.strip().casefold(), set())
+            if len(matching_ids) != 1:
+                raise ValueError(
+                    "Search for a specific catalog product before calculating its price."
+                )
+            quantity = item.get("quantity")
+            if (
+                isinstance(quantity, bool)
+                or not isinstance(quantity, int)
+                or not 1 <= quantity <= 10000
+            ):
+                raise ValueError("Each item quantity must be between 1 and 10000.")
+
+            product = catalog_products[next(iter(matching_ids))]
+            product_currency = str(product["currency"]).upper()
+            if currency is not None and product_currency != currency:
+                raise ValueError("Items in one order must use the same currency.")
+            currency = product_currency
+            unit_price_minor = int(product["price_minor"])
+            line_total_minor = unit_price_minor * quantity
+            subtotal_minor += line_total_minor
+            calculated_items.append(
+                {
+                    "product_name": product["name"],
+                    "quantity": quantity,
+                    "unit_price": format_minor_amount(
+                        unit_price_minor, product_currency
+                    ),
+                    "line_total": format_minor_amount(
+                        line_total_minor, product_currency
+                    ),
+                }
+            )
+
+        if currency is None:
+            raise RuntimeError("The order subtotal could not be calculated.")
+        return {
+            "items": calculated_items,
+            "item_subtotal": format_minor_amount(subtotal_minor, currency),
+            "currency": currency,
+            "note": "The secure checkout page shows the final amount.",
+        }
+
+    @tool
     def search_public_web(query: str) -> list[dict[str, str]]:
         """Search public web information when the business catalog does not answer the question."""
         return search_web(query)
@@ -567,6 +639,8 @@ def build_business_agent(
         list_available_business_products,
         search_public_web,
     ]
+    if audience == "customer":
+        tools.append(calculate_customer_order_total)
     memory_config = (
         get_memory_config(business_id)
         if audience == "owner" or (memory_opt_in and memory_customer_reference)
@@ -834,7 +908,10 @@ def build_business_agent(
             return {
                 "transaction_id": result["public_transaction_id"],
                 "checkout_url": checkout_url,
-                "amount_minor": result["snapshot"]["total_amount_minor"],
+                "total": format_minor_amount(
+                    result["snapshot"]["total_amount_minor"],
+                    result["snapshot"]["currency"],
+                ),
                 "currency": result["snapshot"]["currency"],
                 "expires_at": result["expires_at"],
                 "status": result["status"],
@@ -888,6 +965,16 @@ def build_business_agent(
         agent_config=agent_config,
         audience=audience,
     )
+    if audience == "customer" and checkout_tool_reasons:
+        system_prompt += """
+
+Checkout is not available in this conversation. Do not claim that a checkout
+was created, that a team approval is required, or that a handoff was recorded
+unless a tool result confirms it. Explain briefly that you cannot prepare a
+secure checkout right now. Offer a team handoff only if one has not already been
+recorded in the conversation. Do not repeatedly ask the customer to confirm the
+same purchase.
+"""
     return Agent(
         model=model,
         tools=tools,
@@ -907,14 +994,33 @@ def invoke_business_agent(
     if images:
         prompt = [{"text": message}]
         prompt.extend(image.agent_content_block() for image in images)
-    result = agent(
-        prompt,
-        limits=Limits(
-            turns=MAX_AGENT_TURNS,
-            output_tokens=MAX_AGENT_OUTPUT_TOKENS,
-            total_tokens=MAX_AGENT_TOTAL_TOKENS,
-        ),
-    )
+    try:
+        result = agent(
+            prompt,
+            limits=Limits(
+                turns=MAX_AGENT_TURNS,
+                output_tokens=MAX_AGENT_OUTPUT_TOKENS,
+                total_tokens=MAX_AGENT_TOTAL_TOKENS,
+            ),
+        )
+    except MaxTokensReachedException:
+        logger.warning(
+            "Agent response reached its token limit; requesting a concise continuation"
+        )
+        try:
+            result = agent(
+                "Continue with one concise final response using completed tool results. "
+                "Do not repeat actions that already succeeded.",
+                limits=Limits(turns=2, output_tokens=400, total_tokens=2000),
+            )
+        except MaxTokensReachedException:
+            logger.exception("Agent continuation also reached its token limit")
+            if audience == "customer":
+                return (
+                    "I couldn't finish my reply just now because of a system limit. "
+                    "Please try again or contact the store team."
+                )
+            raise
     response = str(result).strip()
     if not response:
         raise RuntimeError("The agent returned no text response.")

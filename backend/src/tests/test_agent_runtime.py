@@ -11,7 +11,7 @@ from uuid import uuid4
 from pydantic import SecretStr
 from strands.models.gemini import GeminiModel
 from strands.models.openai import OpenAIModel
-from strands.types.exceptions import ModelThrottledException
+from strands.types.exceptions import MaxTokensReachedException, ModelThrottledException
 
 from src.agent import worker as agent_worker
 from src.agent.config import AgentRuntimeSettings
@@ -21,6 +21,7 @@ from src.agent.runtime import (
     customer_catalog_product,
     find_business_products,
     include_secure_checkout_link,
+    invoke_business_agent,
     product_image_attachments,
     product_image_query,
     product_image_reply,
@@ -250,6 +251,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("Do not send product photos", customer_prompt)
         self.assertIn("explicitly asks to see a photo", customer_prompt)
         self.assertIn("list_available_business_products", customer_prompt)
+        self.assertIn("calculate_customer_order_total", customer_prompt)
         self.assertIn("expected to help complete checkout", customer_prompt)
         owner_prompt = build_business_system_prompt(
             business={"name": "Store"},
@@ -276,6 +278,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(
             sorted(agent.tool_registry.registry.keys()),
             [
+                "calculate_customer_order_total",
                 "list_available_business_products",
                 "search_business_products",
                 "search_public_web",
@@ -287,8 +290,8 @@ class AgentRuntimeTests(unittest.TestCase):
             "id": str(uuid4()),
             "name": "Grey Vintage Shirt",
             "description": "Vintage cotton shirt",
-            "price_minor": 4500,
-            "currency": "NGN",
+            "price_minor": 500,
+            "currency": "USD",
             "stock_quantity": 4,
             "provider_data": {"image_urls": ["https://cdn.example.com/shirt.jpg"]},
             "image_asset_ids": [],
@@ -309,8 +312,8 @@ class AgentRuntimeTests(unittest.TestCase):
                     "checkout_url": "https://checkout.example.com/session",
                     "public_transaction_id": "transaction-a",
                     "snapshot": {
-                        "total_amount_minor": 4500,
-                        "currency": "NGN",
+                        "total_amount_minor": 1000,
+                        "currency": "USD",
                     },
                     "expires_at": "2026-11-12T00:00:00+00:00",
                     "status": "pending",
@@ -341,6 +344,13 @@ class AgentRuntimeTests(unittest.TestCase):
             products = agent.tool_registry.registry[
                 "list_available_business_products"
             ]._tool_func(limit=8)
+            total = agent.tool_registry.registry[
+                "calculate_customer_order_total"
+            ]._tool_func(
+                items=[
+                    {"product_name": "Grey Vintage Shirt", "quantity": 2}
+                ]
+            )
             with self.assertRaises(ValueError):
                 agent.tool_registry.registry[
                     "list_available_business_products"
@@ -353,6 +363,10 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertEqual(products[0]["name"], "Grey Vintage Shirt")
         self.assertNotIn("product_id", products[0])
+        self.assertNotIn("price_minor", products[0])
+        self.assertEqual(products[0]["unit_price"], "USD 5.00")
+        self.assertEqual(total["items"][0]["line_total"], "USD 10.00")
+        self.assertEqual(total["item_subtotal"], "USD 10.00")
         self.assertEqual(
             selected_images,
             [
@@ -365,6 +379,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(
             checkout["checkout_url"], "https://checkout.example.com/session"
         )
+        self.assertEqual(checkout["total"], "USD 10.00")
         self.assertEqual(checkout_urls, ["https://checkout.example.com/session"])
         self.assertEqual(
             str(create_transaction.call_args.kwargs["items"][0].product_id),
@@ -538,6 +553,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("AGENTCARD_ENABLED_disabled", logs.output[0])
         self.assertIn("create_carts_and_orders_disabled", logs.output[0])
         self.assertIn("create_paypal_checkout_disabled", logs.output[0])
+        self.assertIn("Checkout is not available", agent.system_prompt)
 
     def test_customer_agent_records_checkout_handoff_as_pending_approval(self) -> None:
         approval_id = str(uuid4())
@@ -678,7 +694,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("Do not send product photos", prompt)
         self.assertIn(
             "image availability alone is not a reason to send one",
-            prompt,
+            " ".join(prompt.split()),
         )
 
     def test_customer_catalog_result_does_not_expose_internal_product_id_or_image_url(self) -> None:
@@ -697,7 +713,26 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("product_id", result)
         self.assertNotIn("image_urls", result)
         self.assertTrue(result["image_available"])
+        self.assertNotIn("price_minor", result)
+        self.assertEqual(result["unit_price"], "USD 1.00")
         self.assertEqual(result["name"], "Shoes")
+
+    def test_agent_continues_concisely_after_token_limit(self) -> None:
+        calls: list[tuple[str, Any]] = []
+
+        def fake_agent(message: str, *, limits: Any) -> str:
+            calls.append((message, limits))
+            if len(calls) == 1:
+                raise MaxTokensReachedException("limit reached")
+            return "I couldn't prepare checkout right now."
+
+        response = invoke_business_agent(
+            fake_agent, "Can we check out?", audience="customer"
+        )
+
+        self.assertEqual(response, "I couldn't prepare checkout right now.")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("Do not repeat actions", calls[1][0])
 
     def test_customer_checkout_resolves_only_products_from_catalog_search(self) -> None:
         items = resolve_customer_checkout_items(
