@@ -22,7 +22,7 @@ from src.agentcard.service import (
     create_agentcard_transaction,
 )
 from src.agentcard.routes import process_verified_paypal_webhook
-from src.agentcard.receipts import _receipt_pdf
+from src.agentcard.receipts import _receipt_pdf, _telegram_receipt_caption
 from src.schemas.agentcard import AgentCardItemRequest
 
 
@@ -521,6 +521,24 @@ class AgentCardReceiptTests(unittest.TestCase):
             },
         )
         self.assertTrue(content.startswith(b"%PDF-"))
+
+    def test_customer_receipt_caption_has_verified_payment_references(self) -> None:
+        caption = _telegram_receipt_caption(
+            "rcpt_example",
+            {
+                "public_transaction_id": "txn_example",
+                "currency": "USD",
+                "total_amount_minor": 1250,
+            },
+            {"provider_capture_id": "CAPTURE-123"},
+        )
+
+        self.assertIn("Payment confirmed by PayPal.", caption)
+        self.assertIn("Receipt: rcpt_example", caption)
+        self.assertIn("Amount paid: USD 12.50", caption)
+        self.assertIn("Transaction reference: txn_example", caption)
+        self.assertIn("PayPal capture reference: CAPTURE-123", caption)
+        self.assertNotIn("tracking number", caption.lower())
 
 
 if __name__ == "__main__":

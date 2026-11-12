@@ -36,12 +36,21 @@ including:
 - `backend/src/supabase/migrations/0001_core_schema.sql`
 - `backend/src/supabase/migrations/0002_strands_agent_queue.sql`
 - `backend/src/supabase/migrations/0003_agentcard_transactions.sql`
-- Migrations `0004` through `0008`
+- Migrations `0004` through `0011`
 
 Migration 0003 creates the transaction, checkout, payment, webhook, refund,
 and receipt tables, their access policies and service-role functions, and the
 private `agentcard-receipts` Storage bucket. Do not enable payments against a
 database that has not applied it.
+
+Migration 0011 sends a realtime dashboard notification after a receipt is queued
+for a verified payment and queues an owner-agent run. The owner agent verifies
+the current transaction before reporting the sale. For Telegram customer
+conversations, the receipt worker sends a PDF with the receipt number, paid
+amount, transaction reference, and PayPal capture reference. The transaction
+reference is not shipping tracking; a carrier tracking number is shared only
+when a fulfillment integration supplies one. These sale notifications respect
+the business's **Payment updates** preference.
 
 ### Render backend environment
 
@@ -197,6 +206,8 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
    confirmed. A return redirect by itself is not confirmation.
 7. Confirm the business order is paid and the receipt worker generates a
    receipt. For Telegram, verify receipt delivery in the customer conversation.
+   Confirm the owner sees a payment notification in the dashboard and the
+   owner-agent conversation.
 
 An unpaid checkout expires after 30 minutes. Use the same checkout link while
 its status is pending; do not start a second payment when the page says payment
@@ -214,6 +225,9 @@ states.
 - `PAYMENT.CAPTURE.COMPLETED` has a valid PayPal signature and its amount,
   currency, and transaction reference match before the order becomes paid.
 - Replayed webhook events do not duplicate payment/order/receipt effects.
+- A verified payment creates one dashboard notification and one owner-agent
+  status update; the owner's **Payment updates** preference controls these
+  alerts.
 - An authorized owner can ask the Business Agent for recent AgentCard
   transaction statuses; the agent reads current database status and does not
   infer payment success from a checkout URL or redirect.

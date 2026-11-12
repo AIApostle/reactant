@@ -250,6 +250,11 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertIn("create_approval_request", owner_prompt)
         self.assertIn("approval does not execute", owner_prompt)
+        self.assertIn("payment-system status update", owner_prompt)
+        self.assertIn("transaction reference is not a", owner_prompt)
+        self.assertIn("carrier tracking number", owner_prompt)
+        self.assertIn("A payment is successful only when the backend has verified it.", customer_prompt)
+        self.assertIn("A transaction reference is not a shipment tracking number.", customer_prompt)
 
     def test_agent_has_only_the_scoped_catalog_tool(self) -> None:
         with patch("src.agent.runtime.get_memory_config", return_value=None):

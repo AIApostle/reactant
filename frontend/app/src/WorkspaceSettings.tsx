@@ -379,7 +379,7 @@ export default function WorkspaceSettings({
             </div>
           )}
           {activeTab === 'Notifications' && (
-            <SettingsSection title="Email notifications" description="Choose the updates you and your team receive.">
+            <SettingsSection title="Workspace notifications" description="Choose which workspace updates appear for you and your team.">
               <div className="notification-preferences">
                 <NotificationPreference label="New customer conversations" description="Get notified when a conversation needs your team." checked={notificationPreferences.new_conversations} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, new_conversations: checked }))} />
                 <NotificationPreference label="Approval requests" description="Know when the agent needs approval for an action." checked={notificationPreferences.approval_requests} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, approval_requests: checked }))} />

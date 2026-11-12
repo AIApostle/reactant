@@ -380,14 +380,21 @@ def _send_telegram_receipt(
     bot_token: str,
     chat_id: str,
     receipt_number: str,
+    transaction: dict[str, Any],
+    payment: dict[str, Any],
     pdf: bytes,
 ) -> str:
+    caption = _telegram_receipt_caption(
+        receipt_number,
+        transaction,
+        payment,
+    )
     try:
         response = httpx.post(
             f"https://api.telegram.org/bot{bot_token}/sendDocument",
             data={
                 "chat_id": chat_id,
-                "caption": f"Payment confirmed. Receipt {receipt_number}.",
+                "caption": caption,
             },
             files={"document": ("receipt.pdf", pdf, "application/pdf")},
             timeout=30,
@@ -419,6 +426,22 @@ def _update_receipt(
     )
     if not result:
         raise RuntimeError("The receipt processing lease was lost.")
+
+
+def _telegram_receipt_caption(
+    receipt_number: str,
+    transaction: dict[str, Any],
+    payment: dict[str, Any],
+) -> str:
+    return "\n".join(
+        [
+            "Payment confirmed by PayPal.",
+            f"Receipt: {receipt_number}",
+            f"Amount paid: {_money(int(transaction['total_amount_minor']), transaction['currency'])}",
+            f"Transaction reference: {transaction['public_transaction_id']}",
+            f"PayPal capture reference: {payment.get('provider_capture_id') or 'Unavailable'}",
+        ]
+    )
 
 
 def _process_receipt(client: Client, receipt: dict[str, Any]) -> None:
@@ -493,6 +516,8 @@ def _process_receipt(client: Client, receipt: dict[str, Any]) -> None:
             credentials["bot_token"],
             transaction["customer_reference"],
             receipt["receipt_number"],
+            transaction,
+            payment,
             pdf,
         )
         now = datetime.now(timezone.utc).isoformat()

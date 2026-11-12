@@ -133,7 +133,11 @@ project before retrying.
   webhooks, refunds, reconciliation, and receipts. Customers can choose a
   PayPal account or ask PayPal to show guest card checkout when eligible.
   This onboarding mode does not support Expanded Checkout's inline card fields.
-  The Business Agent can read current transaction statuses for the owner.
+  After verified payment, the receipt worker generates a receipt, sends it to
+  Telegram customers when available, and emits an owner dashboard alert plus a
+  queued owner-agent status update. The owner agent verifies the transaction
+  before reporting it. Transaction references are not shipping tracking
+  numbers; tracking is reported only when supplied by fulfillment.
   Seller onboarding and payment capabilities still require PayPal approval and
   dashboard setup.
 - Strands `Agent` remains the orchestration runtime: it manages the conversation

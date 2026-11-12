@@ -70,6 +70,7 @@ import {
   type Approval,
   type Business,
   type Integration,
+  type Notification,
   type OwnerMessage,
   type TelegramSetup,
   type WebsiteChatInstall,
@@ -359,6 +360,10 @@ function App() {
   const [replyProductsBusinessId, setReplyProductsBusinessId] = useState('')
   const catalogRevision = useRef(0)
   const [approvals, setApprovals] = useState<Approval[]>([])
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [notificationsBusinessId, setNotificationsBusinessId] = useState('')
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationsError, setNotificationsError] = useState('')
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(null)
@@ -391,6 +396,14 @@ function App() {
   const currentConversation = conversations.find((item) => item.id === selectedConversation)
   const activeOrder = orders.find((item) => item.id === selectedOrder)
   const pendingApprovals = approvals.filter((item) => item.status === 'pending').length
+  const notificationBusinessId = business?.id
+  const businessNotifications = business && notificationsBusinessId === business.id ? notifications : []
+  const notificationsLoading = Boolean(
+    notificationBusinessId &&
+    notificationsBusinessId !== notificationBusinessId &&
+    !notificationsError,
+  )
+  const unreadNotifications = businessNotifications.filter((item) => !item.read_at).length
   const connections: Record<Connection, boolean> = {
     WooCommerce: integrations.some((item) => item.provider === 'woocommerce' && item.status === 'connected'),
     Shopify: integrations.some((item) => item.provider === 'shopify' && item.status === 'connected'),
@@ -517,6 +530,25 @@ function App() {
   }, [business, page])
 
   useEffect(() => {
+    const businessId = notificationBusinessId
+    if (!businessId) return
+    let active = true
+    void apiRequest<Notification[]>(
+      businessPath(businessId, '/notifications?limit=25'),
+      { cache: 'no-store' },
+    ).then((rows) => {
+      if (active) {
+        setNotifications(rows)
+        setNotificationsBusinessId(businessId)
+        setNotificationsError('')
+      }
+    }).catch((error: unknown) => {
+      if (active) setNotificationsError(error instanceof Error ? error.message : 'Notifications could not be loaded.')
+    })
+    return () => { active = false }
+  }, [notificationBusinessId])
+
+  useEffect(() => {
     if (!business) return
     const businessId = business.id
     let active = true
@@ -548,6 +580,20 @@ function App() {
               ).then((rows) => {
                 if (active) setApprovals(rows)
               }).catch(() => undefined)
+            }
+            if (message.type?.startsWith('notification.')) {
+              void apiRequest<Notification[]>(
+                businessPath(businessId, '/notifications?limit=25'),
+                { cache: 'no-store' },
+              ).then((rows) => {
+                if (active) {
+                  setNotifications(rows)
+                  setNotificationsBusinessId(businessId)
+                  setNotificationsError('')
+                }
+              }).catch((error: unknown) => {
+                if (active) setNotificationsError(error instanceof Error ? error.message : 'Notifications could not be refreshed.')
+              })
             }
             if (!message.type?.startsWith('conversation.')) return
             const conversationId = message.data?.conversation_id
@@ -802,6 +848,20 @@ function App() {
     }
   }
 
+  async function markNotificationRead(notificationId: string) {
+    if (!business) return
+    try {
+      const updated = await apiRequest<Notification>(
+        businessPath(business.id, `/notifications/${encodeURIComponent(notificationId)}/read`),
+        { method: 'POST' },
+      )
+      setNotifications((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setNotificationsError('')
+    } catch (error) {
+      setNotificationsError(error instanceof Error ? error.message : 'The notification could not be marked as read.')
+    }
+  }
+
   if (workspaceLoading || !sessionReady) {
     return <WorkspaceGate message={workspaceError || 'Loading your workspace...'} />
   }
@@ -855,10 +915,48 @@ function App() {
                 <span>Search</span>
                 <kbd>⌘ K</kbd>
               </Button>
-              <button className="icon-button notification-button" aria-label="Notifications" onClick={() => setToast('Notifications will appear here when available.')}>
-                <Bell size={19} />
-                <span className="notification-mark" />
-              </button>
+              <div className="notification-control">
+                <button
+                  className="icon-button notification-button"
+                  aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}
+                  aria-expanded={notificationsOpen}
+                  aria-controls="notification-panel"
+                  onClick={() => setNotificationsOpen((open) => !open)}
+                >
+                  <Bell size={19} />
+                  {unreadNotifications > 0 && <span className="notification-mark" />}
+                </button>
+                {notificationsOpen && (
+                  <section className="notification-panel" id="notification-panel" aria-label="Notifications">
+                    <div className="notification-panel-heading">
+                      <strong>Notifications</strong>
+                      <span>{unreadNotifications ? `${unreadNotifications} unread` : 'All caught up'}</span>
+                    </div>
+                    {notificationsError && <p className="notification-error" role="alert">{notificationsError}</p>}
+                    {notificationsLoading && <p className="notification-empty">Loading notifications...</p>}
+                    {!notificationsLoading && businessNotifications.length === 0 && !notificationsError && (
+                      <p className="notification-empty">Payment and workspace updates will appear here.</p>
+                    )}
+                    <div className="notification-list">
+                      {businessNotifications.map((notification) => (
+                        <button
+                          className={`notification-item${notification.read_at ? '' : ' is-unread'}`}
+                          key={notification.id}
+                          onClick={() => {
+                            if (!notification.read_at) void markNotificationRead(notification.id)
+                          }}
+                        >
+                          <span className="notification-item-title">{notification.title}</span>
+                          <span className="notification-item-body">{notification.body}</span>
+                          <time dateTime={notification.created_at}>
+                            {new Date(notification.created_at).toLocaleString()}
+                          </time>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </div>
               <button className="profile-button" aria-label="Open owner center" onClick={() => navigate('owner-center')}>
                 <span className="profile-avatar">{nameInitials(userName)}</span>
                 <CaretDown size={14} />
