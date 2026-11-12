@@ -72,14 +72,26 @@ async def _read_payload(request: Request) -> tuple[bytes, dict[str, Any]]:
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail={"code": "payload_too_large", "message": "The webhook payload is too large."},
             )
+    raw_content = bytes(content)
     try:
-        payload = ProviderWebhookPayload.model_validate_json(bytes(content))
+        parsed_payload = json.loads(raw_content)
+        ProviderWebhookPayload.model_validate(parsed_payload)
     except ValidationError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "malformed_request", "message": "The webhook request is malformed."},
         ) from error
-    return bytes(content), payload.model_dump(mode="json", exclude_none=True)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "malformed_request", "message": "The webhook request is malformed."},
+        ) from error
+    if not isinstance(parsed_payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "malformed_request", "message": "The webhook request is malformed."},
+        )
+    return raw_content, parsed_payload
 
 
 def _integration_credentials(
@@ -1046,7 +1058,7 @@ async def receive_paypal_webhook(
     integration_id: UUID,
     request: Request,
 ) -> ResourceEnvelope[WebhookAck]:
-    _, payload = await _read_payload(request)
+    raw_payload, payload = await _read_payload(request)
     event_id = payload.get("id")
     event_type = payload.get("event_type")
     if not isinstance(event_id, str) or not event_id or len(event_id) > 255:
@@ -1089,29 +1101,50 @@ async def receive_paypal_webhook(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "webhook_verification_unavailable", "message": "Webhook verification is not configured."},
         )
-    verification_payload = {
+    verification_metadata = {
         "auth_algo": request.headers.get("paypal-auth-algo"),
         "cert_url": request.headers.get("paypal-cert-url"),
         "transmission_id": request.headers.get("paypal-transmission-id"),
         "transmission_sig": request.headers.get("paypal-transmission-sig"),
         "transmission_time": request.headers.get("paypal-transmission-time"),
         "webhook_id": webhook_id,
-        "webhook_event": payload,
     }
-    if not all(
-        isinstance(verification_payload[key], str)
-        for key in (
-            "auth_algo",
-            "cert_url",
-            "transmission_id",
-            "transmission_sig",
-            "transmission_time",
+    required_verification_headers = (
+        "auth_algo",
+        "cert_url",
+        "transmission_id",
+        "transmission_sig",
+        "transmission_time",
+    )
+    missing_verification_headers = [
+        key
+        for key in required_verification_headers
+        if not isinstance(verification_metadata[key], str)
+    ]
+    if missing_verification_headers:
+        logger.warning(
+            "PayPal webhook is missing signature headers integration_id=%s event_type=%s missing_headers=%s",
+            integration_id,
+            event_type,
+            ",".join(missing_verification_headers),
         )
-    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "invalid_webhook_signature", "message": "The webhook signature is invalid."},
         )
+    # PayPal verifies a checksum of the original webhook body. Inserting the
+    # original JSON bytes avoids changing key order, fields, or number formats
+    # through model serialization before postback verification.
+    verification_prefix = json.dumps(
+        verification_metadata,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    verification_body = (
+        verification_prefix[:-1]
+        + b',"webhook_event":'
+        + raw_payload
+        + b"}"
+    )
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=False) as http:
             token_response = await http.post(
@@ -1130,8 +1163,11 @@ async def receive_paypal_webhook(
                 raise ValueError("PayPal access token missing.")
             verification_response = await http.post(
                 f"{api_base}/v1/notifications/verify-webhook-signature",
-                headers={"Authorization": "Bearer {}".format(access_token)},
-                json=verification_payload,
+                headers={
+                    "Authorization": "Bearer {}".format(access_token),
+                    "Content-Type": "application/json",
+                },
+                content=verification_body,
             )
             verification_response.raise_for_status()
             verification = verification_response.json()
@@ -1142,7 +1178,15 @@ async def receive_paypal_webhook(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "webhook_verification_unavailable", "message": "The webhook could not be verified right now."},
         ) from error
-    if verification.get("verification_status") != "SUCCESS":
+    verification_status = verification.get("verification_status")
+    if verification_status != "SUCCESS":
+        logger.warning(
+            "PayPal rejected webhook signature verification integration_id=%s event_type=%s webhook_id=%s verification_status=%s",
+            integration_id,
+            event_type,
+            webhook_id,
+            verification_status,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "invalid_webhook_signature", "message": "The webhook signature is invalid."},
