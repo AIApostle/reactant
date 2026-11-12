@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from pydantic import SecretStr
-from strands.models.openai import OpenAIModel
+from strands.models.gemini import GeminiModel
 from strands.types.exceptions import MaxTokensReachedException
 
 from src.agent import worker as agent_worker
@@ -182,13 +182,25 @@ class OwnerAssistantRoutesTests(unittest.TestCase):
 
 
 class AgentRuntimeTests(unittest.TestCase):
-    def test_openrouter_free_model_is_the_only_configured_provider(self) -> None:
+    def test_gemini_is_the_only_configured_provider(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            settings = AgentRuntimeSettings(_env_file=None)
+            settings = AgentRuntimeSettings(
+                _env_file=None,
+                gemini_model_id="gemini-test-text",
+                gemini_vision_model_id="gemini-test-vision",
+            )
 
-        self.assertEqual(settings.required_api_key_name, "OPENROUTER_API_KEY")
-        self.assertEqual(settings.selected_model_id(), "openrouter/free")
-        self.assertEqual(settings.selected_model_id(vision=True), "openrouter/free")
+        self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
+        self.assertEqual(settings.selected_model_id(), "gemini-test-text")
+        self.assertEqual(settings.selected_model_id(vision=True), "gemini-test-vision")
+
+    def test_gemini_and_google_api_key_environment_names_are_supported(self) -> None:
+        for key_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            with self.subTest(key_name=key_name):
+                with patch.dict(os.environ, {key_name: "test-key"}, clear=True):
+                    settings = AgentRuntimeSettings(_env_file=None)
+
+                self.assertEqual(settings.model_api_key.get_secret_value(), "test-key")
 
     def test_system_prompt_contains_business_context_and_safety_rules(self) -> None:
         prompt = build_business_system_prompt(
@@ -245,7 +257,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config=None,
@@ -301,7 +313,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
                 agent_config={
@@ -412,7 +424,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config=None,
@@ -443,7 +455,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
                 agent_config=None,
@@ -480,7 +492,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
                 agent_config=None,
@@ -516,7 +528,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config={
@@ -547,7 +559,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
                 agent_config={"permissions": {}},
@@ -588,7 +600,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
                 agent_config={"permissions": {}},
@@ -630,7 +642,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    openrouter_api_key=SecretStr("test-key"),
+                    gemini_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
                 agent_config=None,
@@ -785,10 +797,10 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("d7356ad3-ba69-46fd-91d1-daebf6ab7142", response)
         self.assertNotIn("product ID", response)
 
-    def test_agent_uses_openrouter_free_model_with_configured_api_key(self) -> None:
+    def test_agent_uses_gemini_model_with_configured_api_key(self) -> None:
         settings = AgentRuntimeSettings(
             _env_file=None,
-            openrouter_api_key=SecretStr("test-key"),
+            gemini_api_key=SecretStr("test-key"),
         )
         agent = build_business_agent(
             client=ProductClient(),
@@ -799,18 +811,14 @@ class AgentRuntimeTests(unittest.TestCase):
             history=[],
         )
 
-        self.assertIsInstance(agent.model, OpenAIModel)
-        self.assertEqual(agent.model.config["model_id"], "openrouter/free")
-        self.assertEqual(
-            agent.model.client_args["base_url"],
-            "https://openrouter.ai/api/v1",
-        )
+        self.assertIsInstance(agent.model, GeminiModel)
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:
         settings = AgentRuntimeSettings(
             _env_file=None,
-            openrouter_api_key=SecretStr("test-key"),
+            gemini_api_key=SecretStr("test-key"),
         )
         agent = build_business_agent(
             client=ProductClient(),
@@ -822,12 +830,12 @@ class AgentRuntimeTests(unittest.TestCase):
             audience="customer",
             vision_enabled=True,
         )
-        self.assertIsInstance(agent.model, OpenAIModel)
-        self.assertEqual(agent.model.config["model_id"], "openrouter/free")
+        self.assertIsInstance(agent.model, GeminiModel)
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
 
-    def test_agent_requires_openrouter_key_without_provider_fallback(self) -> None:
+    def test_agent_requires_gemini_key_without_provider_fallback(self) -> None:
         settings = AgentRuntimeSettings(_env_file=None)
-        with self.assertRaisesRegex(RuntimeError, "OPENROUTER_API_KEY"):
+        with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY"):
             build_business_agent(
                 client=ProductClient(),
                 business_id="business-a",

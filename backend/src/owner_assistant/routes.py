@@ -249,7 +249,7 @@ def get_owner_assistant_status(
     if not settings.strands_agent_enabled:
         reason = "disabled"
     elif not settings.has_model_api_key:
-        reason = "missing_openrouter_key"
+        reason = "missing_google_key"
     elif get_supabase_settings().supabase_secret_key is None:
         reason = "missing_service_key"
     else:

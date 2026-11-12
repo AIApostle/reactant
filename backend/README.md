@@ -45,13 +45,13 @@ Additional configuration:
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.
 - `STRANDS_AGENT_ENABLED=true` — opt in to the Strands background worker,
   owner-assistant runtime, and website chat agent. Requires
-  `SUPABASE_SECRET_KEY` and `OPENROUTER_API_KEY`. Keep
+  `SUPABASE_SECRET_KEY` and `GEMINI_API_KEY`. Keep
   disabled until these credentials and the Supabase
   migration are configured.
-- `OPENROUTER_API_KEY` — backend-only OpenRouter key. The agent uses only
-  OpenRouter's `openrouter/free` router for both text and vision requests.
-  Model selection is intentionally fixed; no provider or model override is
-  supported. Never expose this key to the frontend.
+- `GEMINI_API_KEY` — backend-only Google AI Studio key. Strands uses Gemini for
+  text and vision inference, with `gemini-3.8-flash` as the default model.
+  `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override the model IDs.
+  Never expose the key to the frontend.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
 - `PAYPAL_WEBHOOK_IDS` — backend-only JSON object mapping each PayPal integration
@@ -117,8 +117,8 @@ project before retrying.
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
-- Strands uses only OpenRouter's `openrouter/free` model endpoint. There is no
-  alternate provider or model override.
+- Strands uses Google's Gemini API for text and vision inference. No alternate
+  provider or fallback is configured.
   No MCP server is configured in this project, and the current scoped catalog
   tool does not require one. Do not attach a third-party MCP server without an
   explicit trust and permission review.
@@ -129,7 +129,7 @@ project before retrying.
   webhooks, refunds, reconciliation, and receipts. Seller onboarding and
   payment capabilities still require PayPal approval and dashboard setup.
 - Strands `Agent` remains the orchestration runtime: it manages the conversation
-  loop and invokes registered tools. OpenRouter supplies model inference;
+  loop and invokes registered tools. Gemini supplies model inference;
   catalog lookup, total calculation, and AgentCard transaction creation remain
   backend tools with server-side validation.
 - AgentCard is disabled until `AGENTCARD_ENABLED=true`, PayPal seller
@@ -141,7 +141,7 @@ project before retrying.
   implemented for text/caption messages; the Business Agent replies through the
   originating Telegram chat. Telegram photos and image documents are validated,
   normalized, stored in a private bucket, and sent as image inputs to a
-  vision-capable OpenRouter model. Website chat accepts image data URLs through
+  vision-capable Gemini model. Website chat accepts image data URLs through
   its authenticated widget-session endpoint. WhatsApp remains unimplemented.
 - WooCommerce and Shopify credentials can be tested and their products can be
   imported into the tenant's catalog. Each imported product is scoped by
@@ -174,8 +174,8 @@ project before retrying.
   explicit customer opt-in. Avoid storing secrets or sensitive personal data.
 - OAuth authorization/callback, provider connection tests/sync, and WhatsApp
   webhook are marked planned and return an explicit unavailable response.
-- `POST /api/v1/businesses/{business_id}/agent/test` invokes OpenRouter; free
-  model availability and rate limits apply. It is restricted to owners and
+- `POST /api/v1/businesses/{business_id}/agent/test` invokes Gemini. Model
+  availability and rate limits apply. It is restricted to owners and
   admins.
 - Configure all HTTPS origins and secrets before enabling the related
   integration. Do not use a service-role key in user-scoped routes.

@@ -61,7 +61,7 @@ PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US,NG
 STRANDS_AGENT_ENABLED=true
-OPENROUTER_API_KEY=<server-only-openrouter-key>
+GEMINI_API_KEY=<server-only-google-ai-studio-key>
 ```
 
 Keep only the merchant countries you intend to support in

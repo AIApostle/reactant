@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from storage3.utils import StorageException
 
 from strands import Agent, tool
-from strands.models.openai import OpenAIModel
+from strands.models.gemini import GeminiModel
 from strands.types.agent import Limits
 from strands.types.exceptions import MaxTokensReachedException
 from supabase import Client
@@ -322,21 +322,18 @@ def find_business_products(
     ]
 
 
-def _create_openrouter_model(
+def _create_gemini_model(
     settings: AgentRuntimeSettings,
     *,
     vision: bool,
-) -> OpenAIModel | None:
-    api_key = settings.openrouter_api_key
+) -> GeminiModel | None:
+    api_key = settings.gemini_api_key
     if api_key is None:
         return None
-    return OpenAIModel(
-        client_args={
-            "api_key": api_key.get_secret_value(),
-            "base_url": "https://openrouter.ai/api/v1",
-        },
+    return GeminiModel(
+        client_args={"api_key": api_key.get_secret_value()},
         model_id=settings.selected_model_id(vision=vision),
-        params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
+        params={"max_output_tokens": MAX_AGENT_OUTPUT_TOKENS},
     )
 
 
@@ -818,9 +815,9 @@ def build_business_agent(
             ",".join(checkout_tool_reasons),
         )
 
-    model = _create_openrouter_model(settings, vision=vision_enabled)
+    model = _create_gemini_model(settings, vision=vision_enabled)
     if model is None:
-        raise RuntimeError("Configure OPENROUTER_API_KEY for the agent runtime.")
+        raise RuntimeError("Configure GEMINI_API_KEY for the agent runtime.")
 
     system_prompt = build_business_system_prompt(
         business=business,

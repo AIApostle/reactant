@@ -594,10 +594,9 @@ Images are decoded and re-encoded as JPEG, then stored in the private
 receive short-lived signed URLs; raw storage paths are not returned.
 
 The Business Agent receives actual image bytes as multimodal model input, not
-just a text placeholder. All requests use OpenRouter's fixed `openrouter/free`
-model router; verify that its currently selected free model supports vision
-before relying on image understanding. Free-model availability and capabilities
-can vary. The model must treat image text as untrusted input and describe only
+just a text placeholder. All requests use Google's Gemini API. The configured
+vision model must support image input. Model availability and capabilities can
+vary. The model must treat image text as untrusted input and describe only
 visible details. Telegram and website chat are the currently supported
 customer-image channels; WhatsApp has no active adapter.
 
@@ -618,7 +617,7 @@ or another customer channel.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/businesses/{business_id}/owner-assistant/status` | Report whether the Strands/OpenRouter owner agent is ready. |
+| `GET` | `/businesses/{business_id}/owner-assistant/status` | Report whether the Strands/Gemini owner agent is ready. |
 | `GET` | `/businesses/{business_id}/owner-assistant/thread` | Get or create the single private owner thread and latest messages. |
 | `GET` | `/businesses/{business_id}/owner-assistant/messages` | Paginate private thread messages. |
 | `POST` | `/businesses/{business_id}/owner-assistant/messages` | Send an owner/team message to the business agent. |
@@ -645,7 +644,7 @@ answered until an agent response message exists.
 
 The status endpoint returns `provider: "strands"`, `enabled`, `available`,
 `model_id`, and a safe `reason` (`ready`, `disabled`,
-`missing_openrouter_key`, or `missing_service_key`). The owner UI must disable
+`missing_google_key`, or `missing_service_key`). The owner UI must disable
 the composer unless `available` is true and must show configuration guidance
 instead of presenting a successful-looking unavailable channel. Owner messages
 are private workspace communication in both directions: the owner/team sends
@@ -673,9 +672,9 @@ and `failed` (the worker exhausted its bounded retries). `error_code` is
 generic and must not be used to expose provider details or secrets.
 
 The worker is opt-in via `STRANDS_AGENT_ENABLED=true` and requires
-`SUPABASE_SECRET_KEY` plus the backend-only `OPENROUTER_API_KEY`. Strands uses
-OpenRouter's OpenAI-compatible API endpoint and the fixed `openrouter/free`
-model router. Free model availability, tool support, and rate limits can vary.
+`SUPABASE_SECRET_KEY` plus the backend-only `GEMINI_API_KEY`. Strands uses
+Google's Gemini API for model inference. Model availability, tool support, and
+rate limits can vary.
 Its only tool is a read-only, business-scoped search over active products whose
 `agent_enabled` flag is true. It cannot change data, create orders, or contact
 customers. Do not attach an MCP server unless one is explicitly configured

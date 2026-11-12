@@ -57,7 +57,7 @@ PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
 PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true
 AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
-OPENROUTER_API_KEY=<server-only-openrouter-key>
+GEMINI_API_KEY=<server-only-google-ai-studio-key>
 ```
 
 Generate `CREDENTIALS_ENCRYPTION_KEY` with:
@@ -70,7 +70,7 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 Keep the Fernet key stable: changing it makes existing encrypted integration
 credentials unreadable. `SUPABASE_SECRET_KEY` enables the backend's scoped
 service-role operations and AgentCard worker; never put it in Vercel. The
-Strands worker and OpenRouter API key are needed for the agent to
+Strands worker and Gemini API key are needed for the agent to
 create checkouts from Telegram or other supported customer conversations. The
 customer checkout itself uses public, token-scoped API routes.
 
@@ -86,9 +86,10 @@ Sandbox app credentials, BN code, and Sandbox API URL; for production, use the
 Live app credentials, BN code, and Live API URL.
 
 Strands `Agent` orchestrates the conversation and tool calls. All inference uses
-OpenRouter's `openrouter/free` model router, including image requests. Model
-selection is fixed. Configure only `OPENROUTER_API_KEY` on the backend and never
-expose it to the frontend.
+Google's Gemini API, including image requests. The default model is
+`gemini-3.8-flash`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override
+the text and vision models. Configure `GEMINI_API_KEY` only on the backend and
+never expose it to the frontend.
 
 ### Vercel frontend environment
 
@@ -215,7 +216,7 @@ request with the same idempotency key.
 - **Agent does not offer checkout:** check that PayPal Multiparty access and
   the **Onboard after payment** capability are enabled, and check
   `PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED` and `AGENTCARD_ENABLED`,
-  `STRANDS_AGENT_ENABLED`, `OPENROUTER_API_KEY`, agent permissions, enabled
+  `STRANDS_AGENT_ENABLED`, `GEMINI_API_KEY`, agent permissions, enabled
   product, catalog stock, and business country.
 - **PayPal partner app is not configured:** check Render's backend-only
   `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET_KEY`, `PAYPAL_PARTNER_ATTRIBUTION_ID`,
