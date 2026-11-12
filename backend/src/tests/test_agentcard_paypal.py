@@ -1,10 +1,12 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+import httpx
 from fastapi import HTTPException
 
 from src.agentcard.paypal import (
     PayPalError,
+    _log_paypal_request_failure,
     _authenticated_request,
     create_paypal_order,
     create_paypal_refund,
@@ -76,6 +78,34 @@ class PayPalAmountTests(unittest.TestCase):
             )
 
         client.rpc.assert_not_called()
+
+    def test_paypal_request_failure_logs_safe_provider_diagnostics(self) -> None:
+        request = httpx.Request("POST", "https://api-m.sandbox.paypal.com/v2/checkout/orders")
+        response = httpx.Response(
+            422,
+            headers={"paypal-debug-id": "debug-123"},
+            json={
+                "name": "INVALID_REQUEST",
+                "message": "Do not log this provider message",
+                "details": [{"issue": "PAYEE_ACCOUNT_RESTRICTED"}],
+            },
+            request=request,
+        )
+        error = httpx.HTTPStatusError(
+            "request failed",
+            request=request,
+            response=response,
+        )
+
+        with self.assertLogs("src.agentcard.paypal", level="WARNING") as captured:
+            _log_paypal_request_failure("POST", "/v2/checkout/orders", error)
+
+        log_entry = "\n".join(captured.output)
+        self.assertIn("status=422", log_entry)
+        self.assertIn("debug_id=debug-123", log_entry)
+        self.assertIn("error_name=INVALID_REQUEST", log_entry)
+        self.assertIn("PAYEE_ACCOUNT_RESTRICTED", log_entry)
+        self.assertNotIn("Do not log this provider message", log_entry)
 
     def test_nigeria_is_allowed_only_for_sandbox_when_in_country_allowlist(self) -> None:
         client = MagicMock()

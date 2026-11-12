@@ -1,4 +1,6 @@
 import json
+import logging
+import re
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse
@@ -13,6 +15,9 @@ from src.supabase.client import get_supabase_settings
 from src.supabase.repository import execute
 
 
+logger = logging.getLogger(__name__)
+
+
 class PayPalError(RuntimeError):
     pass
 
@@ -22,6 +27,50 @@ PAYPAL_PARTNER_CONFIGURATION_MESSAGE = (
     "PAYPAL_SECRET_KEY, PAYPAL_PARTNER_ATTRIBUTION_ID (or PAYPAL_BN_CODE), "
     "PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED, and PAYPAL_API_BASE_URL."
 )
+
+
+def _log_paypal_request_failure(method: str, path: str, error: Exception) -> None:
+    response = error.response if isinstance(error, httpx.HTTPStatusError) else None
+    status_code = response.status_code if response is not None else None
+    debug_id = (
+        response.headers.get("paypal-debug-id", "")[:128]
+        if response is not None
+        else ""
+    )
+    error_name = "unknown"
+    issue_codes: list[str] = []
+    if response is not None:
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict):
+            provider_error = body.get("error")
+            error_name = body.get("name", "unknown")
+            details = body.get("details", [])
+            if isinstance(provider_error, dict):
+                error_name = provider_error.get("name", error_name)
+                details = provider_error.get("details", details)
+            if not isinstance(error_name, str):
+                error_name = "unknown"
+            error_name = re.sub(r"[^A-Za-z0-9_.-]", "_", error_name)[:64] or "unknown"
+            if isinstance(details, list):
+                issue_codes = [
+                    re.sub(r"[^A-Za-z0-9_.-]", "_", item["issue"])[:64]
+                    for item in details
+                    if isinstance(item, dict) and isinstance(item.get("issue"), str)
+                ][:10]
+
+    logger.warning(
+        "PayPal API request failed method=%s path=%s status=%s debug_id=%s error_name=%s issue_codes=%s exception_type=%s",
+        method,
+        path,
+        status_code,
+        debug_id or "unavailable",
+        error_name,
+        ",".join(issue_codes) or "unavailable",
+        type(error).__name__,
+    )
 
 
 def platform_paypal_credentials() -> dict[str, str]:
@@ -167,6 +216,7 @@ def _request_json(
             response.raise_for_status()
             result = response.json()
     except (httpx.HTTPError, ValueError) as error:
+        _log_paypal_request_failure(method, urlparse(url).path, error)
         raise PayPalError("PayPal could not complete the request.") from error
     if not isinstance(result, dict):
         raise PayPalError("PayPal returned an invalid response.")
@@ -201,7 +251,7 @@ def _authenticated_request(
                 method,
                 f"{_paypal_api_base()}{path}",
                 headers={
-                    "Authorization": "Bearer {}".format(token),
+                    "Authorization": f"Bearer {token}",
                     "Accept": "application/json",
                     **(
                         {
@@ -219,6 +269,7 @@ def _authenticated_request(
             response.raise_for_status()
             result = response.json()
     except (httpx.HTTPError, ValueError) as error:
+        _log_paypal_request_failure(method, path, error)
         raise PayPalError("PayPal could not complete the request.") from error
     if not isinstance(result, dict):
         raise PayPalError("PayPal returned an invalid response.")
