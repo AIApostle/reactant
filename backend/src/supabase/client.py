@@ -30,13 +30,14 @@ class SupabaseSettings(BaseSettings):
     credentials_encryption_key: SecretStr | None = None
     supabase_secret_key: SecretStr | None = None
     internal_service_token: SecretStr | None = None
+    app_env: str = "development"
     allowed_web_origins: str = ""
     paypal_api_base_url: str = "https://api-m.sandbox.paypal.com"
     paypal_receiving_countries: str = "US,NG"
     agentcard_enabled: bool = False
     paypal_onboarding_after_payment_enabled: bool = False
     public_api_base_url: str | None = None
-    public_frontend_url: str = "http://localhost:5173"
+    public_frontend_url: str = "https://reactant-theta.vercel.app"
     shopify_client_id: str | None = None
     shopify_client_secret: SecretStr | None = None
     shopify_scopes: str = "read_products,read_inventory,read_orders"
@@ -56,6 +57,10 @@ class SupabaseSettings(BaseSettings):
     memwal_delegate_key: SecretStr | None = None
     memwal_account_id: str | None = None
     memwal_server_url: str | None = None
+
+    @property
+    def frontend_url(self) -> str:
+        return self.public_frontend_url
 
 
 @lru_cache(maxsize=1)

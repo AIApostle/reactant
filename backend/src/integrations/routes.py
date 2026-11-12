@@ -478,7 +478,7 @@ def get_website_chat_install(
             detail={"code": "not_found", "message": "The website chat integration was not found."},
         )
     settings = get_supabase_settings()
-    frontend = settings.public_frontend_url.rstrip("/")
+    frontend = settings.frontend_url.rstrip("/")
     api_base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
     script = (
         f'<script async src="{frontend}/reactant-chat.js" '
@@ -517,7 +517,7 @@ def start_authorization(
         )
     shop = _shopify_domain(str(request.query_params.get("shop", "")))
     callback_base = (settings.public_api_base_url or str(request.base_url)).rstrip("/")
-    if not callback_base.startswith("https://") and settings.public_frontend_url.startswith("https://"):
+    if not callback_base.startswith("https://") and settings.frontend_url.startswith("https://"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "public_url_unavailable", "message": "Set PUBLIC_API_BASE_URL to an HTTPS backend URL before connecting Shopify."},
@@ -895,7 +895,7 @@ def disconnect_integration(
 @router.get("/integrations/callback/{provider}")
 def integration_callback(provider: str, request: Request) -> RedirectResponse:
     settings = get_supabase_settings()
-    frontend = settings.public_frontend_url.rstrip("/")
+    frontend = settings.frontend_url.rstrip("/")
     if provider != "shopify":
         return RedirectResponse(f"{frontend}/?integration=error&provider={provider}&reason=unsupported")
     state_key = settings.credentials_encryption_key

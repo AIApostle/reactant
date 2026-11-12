@@ -134,7 +134,7 @@ allowed_origins = [
     origin.strip()
     for origin in os.getenv(
         "ALLOWED_WEB_ORIGINS",
-        "https://getreactant.vercel.app,http://localhost:5173",
+        "https://reactant-theta.vercel.app,http://localhost:5173",
     ).split(",")
     if origin.strip()
 ]

@@ -692,7 +692,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
     def test_checkout_link_is_appended_once_after_customer_response(self) -> None:
-        url = "https://getreactant.vercel.app/checkout/example"
+        url = "https://reactant-theta.vercel.app/checkout/example"
 
         self.assertEqual(
             include_secure_checkout_link("Your checkout is ready.", [url]),

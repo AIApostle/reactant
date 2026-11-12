@@ -35,7 +35,19 @@ def _record(result: Any) -> dict[str, Any]:
 
 def _checkout_base_url() -> str:
     settings = get_supabase_settings()
-    parsed = urlparse(settings.public_frontend_url)
+    frontend_url = settings.frontend_url
+    parsed = urlparse(frontend_url)
+    if settings.app_env.lower() == "production" and (
+        parsed.scheme != "https"
+        or parsed.hostname in {"localhost", "127.0.0.1"}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "public_url_unavailable",
+                "message": "Set PUBLIC_FRONTEND_URL to the deployed HTTPS website before enabling customer checkout.",
+            },
+        )
     if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"}:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -52,7 +64,7 @@ def _checkout_base_url() -> str:
                 "message": "The public checkout website is not configured.",
             },
         )
-    return settings.public_frontend_url.rstrip("/")
+    return frontend_url.rstrip("/")
 
 
 def _paypal_integration(
@@ -131,6 +143,7 @@ def create_agentcard_transaction(
     idempotency_key: str,
 ) -> dict[str, Any]:
     _verify_paypal_eligibility(client, business_id)
+    checkout_base_url = _checkout_base_url()
     provider_integration_id = _paypal_integration(client, business_id)
     normalized_items = sorted(
         (
@@ -184,7 +197,7 @@ def create_agentcard_transaction(
     )
     return {
         **result,
-        "checkout_url": f"{_checkout_base_url()}/checkout/{token}",
+        "checkout_url": f"{checkout_base_url}/checkout/{token}",
     }
 
 

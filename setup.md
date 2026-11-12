@@ -54,10 +54,11 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_PERISHABLE_KEY=<server-compatible-supabase-key>
 SUPABASE_SECRET_KEY=<server-only-secret-key>
 CREDENTIALS_ENCRYPTION_KEY=<fernet-key>
-ALLOWED_WEB_ORIGINS=https://getreactant.vercel.app
+APP_ENV=production
+ALLOWED_WEB_ORIGINS=https://reactant-theta.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
 PUBLIC_API_BASE_URL=https://reactant.onrender.com
-PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
+PUBLIC_FRONTEND_URL=https://reactant-theta.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US,NG
 STRANDS_AGENT_ENABLED=true
@@ -223,7 +224,7 @@ Use the hosted HTTPS backend for provider testing. Do not expose Supabase
 secrets through a tunnel. Register the exact Telegram and PayPal webhook URLs
 against that public backend.
 
-The deployed frontend is `https://getreactant.vercel.app` and the deployed
+The deployed frontend is `https://reactant-theta.vercel.app` and the deployed
 backend is `https://reactant.onrender.com`. For local testing, the frontend
 uses `http://localhost:5173` and the backend uses
 `http://localhost:8000`; include both frontend origins in

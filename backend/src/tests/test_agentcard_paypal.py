@@ -13,12 +13,70 @@ from src.agentcard.paypal import (
     verified_capture_details,
     verified_refund_details,
 )
-from src.agentcard.service import _verify_paypal_eligibility
+from src.agentcard.service import (
+    _checkout_base_url,
+    _verify_paypal_eligibility,
+    create_agentcard_transaction,
+)
 from src.agentcard.routes import process_verified_paypal_webhook
 from src.agentcard.receipts import _receipt_pdf
 
 
 class PayPalAmountTests(unittest.TestCase):
+    def test_checkout_base_url_defaults_to_the_deployed_frontend(self) -> None:
+        settings = MagicMock(
+            app_env="production",
+            public_frontend_url="https://reactant-theta.vercel.app",
+            frontend_url="https://reactant-theta.vercel.app",
+        )
+        with patch("src.agentcard.service.get_supabase_settings", return_value=settings):
+            self.assertEqual(
+                _checkout_base_url(),
+                "https://reactant-theta.vercel.app",
+            )
+
+    def test_production_checkout_rejects_localhost_frontend(self) -> None:
+        settings = MagicMock(
+            app_env="production",
+            public_frontend_url="http://localhost:5173",
+            frontend_url="http://localhost:5173",
+        )
+        with (
+            patch("src.agentcard.service.get_supabase_settings", return_value=settings),
+            self.assertRaises(HTTPException) as raised,
+        ):
+            _checkout_base_url()
+
+        self.assertEqual(
+            raised.exception.detail["code"],
+            "public_url_unavailable",
+        )
+
+    def test_invalid_checkout_url_fails_before_transaction_creation(self) -> None:
+        client = MagicMock()
+        with (
+            patch("src.agentcard.service._verify_paypal_eligibility"),
+            patch(
+                "src.agentcard.service._checkout_base_url",
+                side_effect=HTTPException(
+                    status_code=503,
+                    detail={"code": "public_url_unavailable"},
+                ),
+            ),
+            self.assertRaises(HTTPException),
+        ):
+            create_agentcard_transaction(
+                client,
+                business_id="business-id",
+                conversation_id="conversation-id",
+                customer_name="Customer",
+                customer_reference="customer-id",
+                items=[],
+                idempotency_key="idempotency-key",
+            )
+
+        client.rpc.assert_not_called()
+
     def test_nigeria_is_allowed_only_for_sandbox_when_in_country_allowlist(self) -> None:
         client = MagicMock()
         sandbox_settings = MagicMock(
