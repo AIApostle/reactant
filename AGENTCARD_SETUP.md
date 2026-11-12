@@ -36,7 +36,8 @@ including:
 - `backend/src/supabase/migrations/0001_core_schema.sql`
 - `backend/src/supabase/migrations/0002_strands_agent_queue.sql`
 - `backend/src/supabase/migrations/0003_agentcard_transactions.sql`
-- Migrations `0004` through `0011`
+- Migrations `0004` through `0012`, in numerical order, then
+  `20261112182838_agentcard_verified_payment_agent_alert.sql`
 
 Migration 0003 creates the transaction, checkout, payment, webhook, refund,
 and receipt tables, their access policies and service-role functions, and the
@@ -44,13 +45,15 @@ private `agentcard-receipts` Storage bucket. Do not enable payments against a
 database that has not applied it.
 
 Migration 0011 sends a realtime dashboard notification after a receipt is queued
-for a verified payment and queues an owner-agent run. The owner agent verifies
+for a verified payment and queues an owner-agent run. Migration 0013 ensures the
+owner agent is always queued for a verified payment; the **Payment updates**
+preference controls the dashboard notification only. The owner agent verifies
 the current transaction before reporting the sale. For Telegram customer
 conversations, the receipt worker sends a PDF with the receipt number, paid
-amount, transaction reference, and PayPal capture reference. The transaction
-reference is not shipping tracking; a carrier tracking number is shared only
-when a fulfillment integration supplies one. These sale notifications respect
-the business's **Payment updates** preference.
+amount, transaction reference, and PayPal capture reference, plus a message
+that the store will update the customer when the order is on the way. The
+transaction reference is not shipping tracking; a carrier tracking number is
+shared only when a fulfillment integration supplies one.
 
 ### Render backend environment
 
@@ -169,7 +172,11 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
    `PAYMENT.CAPTURE.REFUNDED`, and
    `CHECKOUT.PAYMENT-APPROVAL.REVERSED`. Store the returned webhook ID in the
    Render backend's `PAYPAL_WEBHOOK_IDS` JSON object, keyed by the integration
-   ID in that URL. Webhook IDs are not entered or displayed in the frontend.
+   ID in that URL. Use the current PayPal integration UUID from Reactant, not
+   the PayPal webhook ID. If PayPal receives `404`, the URL UUID no longer
+   identifies an active integration; reconnect PayPal if needed, then update
+   both the webhook URL and the `PAYPAL_WEBHOOK_IDS` mapping. Webhook IDs are
+   not entered or displayed in the frontend.
 5. Test with a Sandbox buyer and a Sandbox seller business account. Funds are
    routed to the business seller, not Reactant. A seller who doesn't complete
    onboarding within 30 days has the pending payment returned to the buyer.
@@ -266,6 +273,22 @@ minor currency units (for example, `1250` means `$12.50`); retry an uncertain
 request with the same idempotency key.
 
 ## Troubleshooting
+
+- **Capture reports `PAYEE_NOT_CONSENTED`:** Do not ask the buyer to pay again.
+  In the after-payment flow, the seller must complete PayPal's emailed business
+  account onboarding and grant Reactant permission. Once PayPal's
+  `MERCHANT.ONBOARDING.COMPLETED` webhook reaches the current integration URL,
+  the backend retries reconciliation and captures the existing approved order.
+  The receipt and owner-agent payment event are created only after PayPal
+  confirms a matching completed capture.
+- **PayPal webhooks return `404`:** Confirm the webhook URL contains the active
+  Reactant PayPal integration UUID and that the same UUID is a key in
+  `PAYPAL_WEBHOOK_IDS`. The mapping value must be that PayPal app's webhook ID.
+- **Payment confirmed but receipt or owner-agent message is missing:** Confirm
+  migration
+  `20261112182838_agentcard_verified_payment_agent_alert.sql` is applied,
+  `SUPABASE_SECRET_KEY` is set on the Render API service, and the connected
+  Telegram integration belongs to the same business.
 
 - **Agent does not offer checkout:** check that PayPal Multiparty access and
   the **Onboard after payment** capability are enabled, and check

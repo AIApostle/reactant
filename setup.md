@@ -119,10 +119,14 @@ backend-only and are loaded from `backend/.env`.
     reconcile existing agent status values with their enabled setting.
 9. Apply `backend/src/supabase/migrations/0008_owner_telegram_channel.sql` to
     enable verified owner-to-agent messaging and Telegram approval commands.
-10. Enable email/password Auth.
-11. For local testing, keep email confirmation disabled or use confirmed test
+10. Apply `0009_realtime_ticket_insert.sql`, `0010_create_realtime_ticket.sql`,
+    `0011_agentcard_payment_alerts.sql`, and `0012_customer_agent_queue.sql`
+    in order, then apply
+    `20261112182838_agentcard_verified_payment_agent_alert.sql`.
+11. Enable email/password Auth.
+12. For local testing, keep email confirmation disabled or use confirmed test
     users.
-12. Confirm the private `product-media`, `agentcard-receipts`, and
+13. Confirm the private `product-media`, `agentcard-receipts`, and
     `customer-chat-media` buckets exist; migrations 0003 and 0005 create the
     AgentCard and customer image buckets.
 

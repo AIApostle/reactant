@@ -436,6 +436,7 @@ def _telegram_receipt_caption(
     return "\n".join(
         [
             "Payment confirmed by PayPal.",
+            "Your receipt is attached. We'll message you when your delivery is on the way.",
             f"Receipt: {receipt_number}",
             f"Amount paid: {_money(int(transaction['total_amount_minor']), transaction['currency'])}",
             f"Transaction reference: {transaction['public_transaction_id']}",

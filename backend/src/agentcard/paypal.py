@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import re
@@ -252,25 +253,32 @@ def _authenticated_request(
     request_id: str | None = None,
 ) -> dict[str, Any]:
     token = _access_token(credentials)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        **(
+            {
+                "PayPal-Partner-Attribution-Id": credentials[
+                    "partner_attribution_id"
+                ]
+            }
+            if credentials.get("partner_attribution_id")
+            else {}
+        ),
+        **({"PayPal-Request-Id": request_id} if request_id else {}),
+    }
+    # Do not assert on behalf of an unconsented seller during progressive
+    # onboarding. After PayPal confirms seller consent, identify the seller on
+    # all subsequent partner API requests.
+    auth_assertion = _seller_auth_assertion(credentials)
+    if auth_assertion:
+        headers["PayPal-Auth-Assertion"] = auth_assertion
     try:
         with httpx.Client(timeout=15, follow_redirects=False) as http:
             response = http.request(
                 method,
                 f"{_paypal_api_base()}{path}",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                    **(
-                        {
-                            "PayPal-Partner-Attribution-Id": credentials[
-                                "partner_attribution_id"
-                            ]
-                        }
-                        if credentials.get("partner_attribution_id")
-                        else {}
-                    ),
-                    **({"PayPal-Request-Id": request_id} if request_id else {}),
-                },
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
@@ -281,6 +289,23 @@ def _authenticated_request(
     if not isinstance(result, dict):
         raise PayPalError("PayPal returned an invalid response.")
     return result
+
+
+def _seller_auth_assertion(credentials: dict[str, str]) -> str | None:
+    if credentials.get("seller_onboarding_status") != "seller_connected":
+        return None
+    client_id = credentials.get("client_id")
+    seller_email = credentials.get("seller_paypal_email")
+    if not client_id or not seller_email:
+        return None
+
+    def encode(value: dict[str, str]) -> str:
+        encoded = base64.urlsafe_b64encode(
+            json.dumps(value, separators=(",", ":")).encode("utf-8")
+        )
+        return encoded.rstrip(b"=").decode("ascii")
+
+    return f"{encode({'alg': 'none'})}.{encode({'iss': client_id, 'email': seller_email})}."
 
 
 def minor_to_paypal_amount(amount_minor: int) -> str:
