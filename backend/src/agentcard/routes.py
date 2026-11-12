@@ -276,6 +276,7 @@ def create_agentcard_payment(
             amount_minor=transaction["total_amount_minor"],
             currency=transaction["currency"],
             checkout_url=checkout_url,
+            payment_method=body.payment_method,
         )
     except PayPalError as error:
         raise HTTPException(

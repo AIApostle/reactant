@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import HTTPException
@@ -64,6 +64,20 @@ CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA = {
         },
         "required": ["items"],
         "additionalProperties": False,
+    }
+}
+CUSTOMER_CHECKOUT_INPUT_SCHEMA = {
+    "json": {
+        **CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA["json"],
+        "properties": {
+            **CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA["json"]["properties"],
+            "payment_method": {
+                "type": "string",
+                "enum": ["paypal", "card"],
+                "description": "The customer's stated preference: PayPal account or card through PayPal guest checkout.",
+            },
+        },
+        "required": ["items", "payment_method"],
     }
 }
 logger = logging.getLogger(__name__)
@@ -565,6 +579,56 @@ def build_business_agent(
         tools.extend([search_business_memory, remember_business_fact])
     if audience == "owner":
         @tool
+        def list_agentcard_transactions(
+            status_filter: str | None = None,
+            public_transaction_id: str | None = None,
+            limit: int = 10,
+        ) -> list[dict[str, Any]]:
+            """Read recent AgentCard statuses, optionally filtered by an exact public transaction ID or status. Use this for owner payment questions; never infer success from a checkout link."""
+            allowed_statuses = {
+                "awaiting_customer",
+                "awaiting_payment",
+                "payment_processing",
+                "payment_pending",
+                "payment_failed",
+                "paid",
+                "cancelled",
+                "expired",
+                "reconciliation",
+                "receipt_generation",
+                "receipt_issued",
+                "receipt_delivered",
+                "partially_refunded",
+                "refunded",
+            }
+            if status_filter is not None and status_filter not in allowed_statuses:
+                raise ValueError("Choose a valid AgentCard transaction status.")
+            if not 1 <= limit <= 50:
+                raise ValueError("Transaction limit must be between 1 and 50.")
+            if public_transaction_id is not None and not re.fullmatch(
+                r"txn_[A-Za-z0-9_-]{1,80}",
+                public_transaction_id.strip(),
+            ):
+                raise ValueError("Provide a valid public transaction ID.")
+
+            query = (
+                client.table("agentcard_transactions")
+                .select(
+                    "public_transaction_id,customer_name,currency,total_amount_minor,"
+                    "status,created_at,paid_at,updated_at"
+                )
+                .eq("business_id", business_id)
+            )
+            if status_filter is not None:
+                query = query.eq("status", status_filter)
+            if public_transaction_id is not None:
+                query = query.eq("public_transaction_id", public_transaction_id.strip())
+            rows = execute(query.order("created_at", desc=True).limit(limit))
+            return rows if isinstance(rows, list) else []
+
+        tools.append(list_agentcard_transactions)
+
+        @tool
         def list_approval_requests(
             status_filter: str | None = None,
             limit: int = 10,
@@ -767,11 +831,12 @@ def build_business_agent(
         if created_checkout_urls is None:
             checkout_tool_reasons.append("checkout_url_collection_missing")
     if audience == "customer" and not checkout_tool_reasons:
-        @tool(inputSchema=CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA)
+        @tool(inputSchema=CUSTOMER_CHECKOUT_INPUT_SCHEMA)
         def create_agentcard_transaction(
             items: list[CustomerOrderItem],
+            payment_method: Literal["paypal", "card"],
         ) -> dict[str, Any]:
-            """Prepare secure checkout after the customer confirms the catalog items, quantities, and calculated total. Pass each item with exact product_name and integer quantity. Example: {"items":[{"product_name":"Brown Vintage Shirt","quantity":2}]}. Do not use name, product, or item as the field name."""
+            """Prepare secure checkout after the customer confirms the items, total, and payment preference. Pass payment_method as paypal or card and each item with exact product_name and integer quantity."""
             validated_items = resolve_customer_checkout_items(
                 items,
                 catalog_product_ids,
@@ -785,6 +850,7 @@ def build_business_agent(
                     customer_reference=customer_reference,
                     items=validated_items,
                     idempotency_key=idempotency_key,
+                    payment_method=payment_method,
                 )
             except (HTTPException, ValueError) as error:
                 error_code = (
@@ -812,6 +878,7 @@ def build_business_agent(
                     result["snapshot"]["total_amount_minor"],
                     result["snapshot"]["currency"],
                 ),
+                "payment_method": payment_method,
                 "currency": result["snapshot"]["currency"],
                 "expires_at": result["expires_at"],
                 "status": result["status"],

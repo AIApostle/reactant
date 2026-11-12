@@ -57,6 +57,8 @@ type PaymentResponse = {
   approval_url: string | null
 }
 
+type PaymentMethod = 'paypal' | 'card'
+
 function formatAmount(amountMinor: number, currency: string) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amountMinor / 100)
 }
@@ -89,10 +91,14 @@ export default function AgentCardCheckout() {
   const [checkout, setCheckout] = useState<Checkout | null>(null)
   const [checkoutStatus, setCheckoutStatus] = useState<CheckoutStatus | null>(null)
   const [accepted, setAccepted] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() =>
+    searchParams.get('payment_method') === 'card' ? 'card' : 'paypal',
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const captureStarted = useRef(false)
+  const payerCancelled = searchParams.get('paypal_cancelled') === '1'
 
   const loadCheckout = useCallback(async () => {
     const data = await publicApiRequest<Checkout>(`/agentcard/checkout/${encodeURIComponent(token)}`)
@@ -171,7 +177,7 @@ export default function AgentCardCheckout() {
         `/agentcard/checkout/${encodeURIComponent(token)}/payment`,
         {
           method: 'POST',
-          body: JSON.stringify({ accepted: true }),
+          body: JSON.stringify({ accepted: true, payment_method: paymentMethod }),
         },
       )
       if (payment.approval_url) {
@@ -205,7 +211,7 @@ export default function AgentCardCheckout() {
 
   const state = checkoutStatus?.status ?? checkout.status
   const paid = ['paid', 'receipt_generation', 'receipt_issued', 'receipt_delivered'].includes(state)
-  const waiting = ['payment_processing', 'payment_pending', 'reconciliation'].includes(state)
+  const waiting = !payerCancelled && ['payment_processing', 'payment_pending', 'reconciliation'].includes(state)
   const unavailable = ['cancelled', 'expired', 'payment_failed'].includes(state)
   const needsConsent = checkout.authorization_required && state === 'awaiting_customer'
 
@@ -248,20 +254,58 @@ export default function AgentCardCheckout() {
           <div className="agentcard-total"><span>Total due</span><strong>{formatAmount(checkout.total_amount_minor, checkout.currency)}</strong></div>
         </section>
 
-        <section className="agentcard-payment-method">
-          <span className="agentcard-paypal-mark">P</span>
-          <span><strong>PayPal</strong><small>Payment is handled securely by PayPal.</small></span>
-        </section>
+        <fieldset
+          className="agentcard-method-picker"
+          disabled={busy || waiting || paid || unavailable}
+        >
+          <legend>How would you like to pay?</legend>
+          <label className={paymentMethod === 'paypal' ? 'selected' : ''}>
+            <input
+              type="radio"
+              name="payment-method"
+              value="paypal"
+              checked={paymentMethod === 'paypal'}
+              onChange={() => {
+                setPaymentMethod('paypal')
+                setAccepted(false)
+              }}
+            />
+            <span className="agentcard-paypal-mark">P</span>
+            <span><strong>PayPal account</strong><small>Continue to PayPal to sign in and pay.</small></span>
+          </label>
+          <label className={paymentMethod === 'card' ? 'selected' : ''}>
+            <input
+              type="radio"
+              name="payment-method"
+              value="card"
+              checked={paymentMethod === 'card'}
+              onChange={() => {
+                setPaymentMethod('card')
+                setAccepted(false)
+              }}
+            />
+            <span className="agentcard-card-mark">Card</span>
+            <span><strong>Debit or credit card</strong><small>Pay through PayPal guest checkout when available.</small></span>
+          </label>
+        </fieldset>
 
         {needsConsent && (
           <label className="agentcard-consent">
             <Checkbox checked={accepted} onCheckedChange={(checked) => setAccepted(checked === true)} />
-            <span>I have reviewed these items and authorize this exact total for payment through PayPal.</span>
+            <span>
+              I have reviewed these items and authorize PayPal to process this exact total
+              {paymentMethod === 'card' ? ' by card' : ' using my PayPal account'}.
+            </span>
           </label>
         )}
 
         {error && <p className="agentcard-inline-error" role="alert">{error}</p>}
         {notice && <p className="agentcard-inline-notice" role="status">{notice}</p>}
+        {payerCancelled && (
+          <p className="agentcard-inline-notice" role="status">
+            PayPal checkout was cancelled before payment confirmation. You can reopen PayPal to continue this same payment attempt.
+          </p>
+        )}
 
         {paid ? (
           <section className="agentcard-result agentcard-result-success">
@@ -287,9 +331,20 @@ export default function AgentCardCheckout() {
               className="agentcard-pay-button"
               size="3"
               onClick={() => void continueToPayment()}
-              disabled={busy || (needsConsent && !accepted) || !['awaiting_customer', 'awaiting_payment'].includes(state)}
+              disabled={
+                busy
+                || (needsConsent && !accepted)
+                || !['awaiting_customer', 'awaiting_payment'].includes(state)
+                  && !(payerCancelled && state === 'payment_processing')
+              }
             >
-              {busy ? 'Connecting to PayPal…' : state === 'awaiting_payment' ? 'Continue to PayPal' : 'Continue to secure payment'}
+              {busy
+                ? 'Connecting to PayPal…'
+                : payerCancelled
+                  ? 'Return to PayPal'
+                : paymentMethod === 'card'
+                  ? 'Continue to card checkout'
+                  : 'Continue to PayPal'}
             </Button>
             <p className="agentcard-expiry">
               Checkout expires {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(checkout.expires_at))}

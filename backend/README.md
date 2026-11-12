@@ -130,8 +130,12 @@ project before retrying.
   not implemented. A `202` response means queued, not delivered.
 - The AgentCard checkout engine supports PayPal seller-email checkout with
   after-payment onboarding, customer consent, server-verified capture, signed
-  webhooks, refunds, reconciliation, and receipts. Seller onboarding and
-  payment capabilities still require PayPal approval and dashboard setup.
+  webhooks, refunds, reconciliation, and receipts. Customers can choose a
+  PayPal account or ask PayPal to show guest card checkout when eligible.
+  This onboarding mode does not support Expanded Checkout's inline card fields.
+  The Business Agent can read current transaction statuses for the owner.
+  Seller onboarding and payment capabilities still require PayPal approval and
+  dashboard setup.
 - Strands `Agent` remains the orchestration runtime: it manages the conversation
   loop and invokes registered tools. Gemini supplies model inference;
   catalog lookup, total calculation, and AgentCard transaction creation remain

@@ -3,7 +3,7 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -141,6 +141,7 @@ def create_agentcard_transaction(
     customer_reference: str,
     items: list[AgentCardItemRequest],
     idempotency_key: str,
+    payment_method: str = "paypal",
 ) -> dict[str, Any]:
     _verify_paypal_eligibility(client, business_id)
     checkout_base_url = _checkout_base_url()
@@ -197,7 +198,10 @@ def create_agentcard_transaction(
     )
     return {
         **result,
-        "checkout_url": f"{checkout_base_url}/checkout/{token}",
+        "checkout_url": (
+            f"{checkout_base_url}/checkout/{token}?"
+            f"{urlencode({'payment_method': payment_method})}"
+        ),
     }
 
 

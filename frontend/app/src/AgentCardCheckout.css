@@ -17,7 +17,6 @@
 }
 
 .agentcard-brand,
-.agentcard-payment-method,
 .agentcard-item,
 .agentcard-totals > div,
 .agentcard-security-note {
@@ -39,8 +38,7 @@
   flex: 1;
 }
 
-.agentcard-brand small,
-.agentcard-payment-method small {
+.agentcard-brand small {
   color: #758179;
   font-size: 12px;
   font-weight: 400;
@@ -157,11 +155,74 @@
   letter-spacing: -.03em;
 }
 
-.agentcard-payment-method {
+.agentcard-method-picker {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.agentcard-method-picker legend {
+  margin-bottom: 10px;
+  color: #17231d;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.agentcard-method-picker label {
+  display: flex;
   gap: 12px;
+  align-items: center;
+  min-width: 0;
   padding: 14px;
   border: 1px solid #e7ebe8;
   border-radius: 14px;
+  cursor: pointer;
+}
+
+.agentcard-method-picker label.selected {
+  border-color: #176f40;
+  background: #f5faf6;
+}
+
+.agentcard-method-picker input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #176f40;
+  flex: 0 0 auto;
+}
+
+.agentcard-method-picker label > span:last-child {
+  display: grid;
+  gap: 3px;
+}
+
+.agentcard-method-picker small {
+  color: #758179;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.agentcard-method-picker:disabled label {
+  cursor: default;
+}
+
+.agentcard-method-picker:disabled {
+  opacity: .7;
+}
+
+.agentcard-card-mark {
+  display: grid;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  background: #eef4f0;
+  color: #176f40;
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .agentcard-paypal-mark {
@@ -175,11 +236,6 @@
   font-size: 20px;
   font-weight: 800;
   font-style: italic;
-}
-
-.agentcard-payment-method > span:last-child {
-  display: grid;
-  gap: 3px;
 }
 
 .agentcard-consent {

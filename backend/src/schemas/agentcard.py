@@ -66,6 +66,7 @@ class AgentCardConsentRequest(RequestModel):
 
 class AgentCardPaymentRequest(RequestModel):
     accepted: Literal[True]
+    payment_method: Literal["paypal", "card"] = "paypal"
 
 
 class AgentCardRefundRequest(RequestModel):

@@ -359,6 +359,9 @@ class AgentRuntimeTests(unittest.TestCase):
             checkout_item_schema = agent.tool_registry.registry[
                 "create_agentcard_transaction"
             ].tool_spec["inputSchema"]["json"]["properties"]["items"]["items"]
+            checkout_schema = agent.tool_registry.registry[
+                "create_agentcard_transaction"
+            ].tool_spec["inputSchema"]["json"]
             total = agent.tool_registry.registry[
                 "calculate_customer_order_total"
             ]._tool_func(
@@ -373,7 +376,8 @@ class AgentRuntimeTests(unittest.TestCase):
             checkout = agent.tool_registry.registry[
                 "create_agentcard_transaction"
             ]._tool_func(
-                items=[{"product_name": "Grey Vintage Shirt", "quantity": 1}]
+                items=[{"product_name": "Grey Vintage Shirt", "quantity": 1}],
+                payment_method="card",
             )
 
         self.assertEqual(products[0]["name"], "Grey Vintage Shirt")
@@ -387,6 +391,11 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("product_name", item_schema["properties"])
         self.assertIn("quantity", item_schema["properties"])
         self.assertEqual(item_schema, checkout_item_schema)
+        self.assertIn("payment_method", checkout_schema["required"])
+        self.assertEqual(
+            checkout_schema["properties"]["payment_method"]["enum"],
+            ["paypal", "card"],
+        )
         self.assertEqual(
             validated_calculator_input["items"][0],
             {"product_name": "Grey Vintage Shirt", "quantity": 2},
@@ -406,11 +415,13 @@ class AgentRuntimeTests(unittest.TestCase):
             checkout["checkout_url"], "https://checkout.example.com/session"
         )
         self.assertEqual(checkout["total"], "USD 10.00")
+        self.assertEqual(checkout["payment_method"], "card")
         self.assertEqual(checkout_urls, ["https://checkout.example.com/session"])
         self.assertEqual(
             str(create_transaction.call_args.kwargs["items"][0].product_id),
             product["id"],
         )
+        self.assertEqual(create_transaction.call_args.kwargs["payment_method"], "card")
         query = client.table.return_value.select.return_value
         query.eq.assert_called_once_with("business_id", "business-a")
         query.eq.return_value.eq.assert_called_once_with("status", "active")
@@ -435,6 +446,54 @@ class AgentRuntimeTests(unittest.TestCase):
 
         self.assertIn("create_approval_request", agent.tool_registry.registry)
         self.assertIn("list_approval_requests", agent.tool_registry.registry)
+        self.assertIn("list_agentcard_transactions", agent.tool_registry.registry)
+
+    def test_owner_agent_can_read_recent_agentcard_transactions(self) -> None:
+        transaction = {
+            "public_transaction_id": "txn_example",
+            "customer_name": "Customer",
+            "currency": "USD",
+            "total_amount_minor": 1250,
+            "status": "paid",
+            "created_at": "2026-11-12T10:00:00+00:00",
+            "paid_at": "2026-11-12T10:01:00+00:00",
+            "updated_at": "2026-11-12T10:01:00+00:00",
+        }
+        client = MagicMock()
+        with (
+            patch("src.agent.runtime.get_memory_config", return_value=None),
+            patch("src.agent.runtime.execute", return_value=[transaction]),
+        ):
+            agent = build_business_agent(
+                client=client,
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    gemini_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store"},
+                agent_config=None,
+                history=[],
+                audience="owner",
+            )
+            result = agent.tool_registry.registry[
+                "list_agentcard_transactions"
+            ]._tool_func(
+                status_filter="paid",
+                public_transaction_id="txn_example",
+                limit=5,
+            )
+
+        self.assertEqual(result, [transaction])
+        client.table.assert_called_once_with("agentcard_transactions")
+        client.table.return_value.select.return_value.eq.assert_called_once_with(
+            "business_id", "business-a"
+        )
+        client.table.return_value.select.return_value.eq.return_value.eq.assert_called_once_with(
+            "status", "paid"
+        )
+        client.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.assert_called_once_with(
+            "public_transaction_id", "txn_example"
+        )
 
     def test_owner_agent_can_read_current_approval_status(self) -> None:
         approved_row = {

@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from fastapi import HTTPException
@@ -22,6 +23,7 @@ from src.agentcard.service import (
 )
 from src.agentcard.routes import process_verified_paypal_webhook
 from src.agentcard.receipts import _receipt_pdf
+from src.schemas.agentcard import AgentCardItemRequest
 
 
 class PayPalAmountTests(unittest.TestCase):
@@ -79,6 +81,49 @@ class PayPalAmountTests(unittest.TestCase):
 
         client.rpc.assert_not_called()
 
+    def test_checkout_url_preserves_selected_payment_preference(self) -> None:
+        client = MagicMock()
+        client.rpc.return_value = None
+        rpc_result = {
+            "public_transaction_id": "txn_example",
+            "snapshot": {"total_amount_minor": 1250, "currency": "USD"},
+            "expires_at": "2026-11-12T00:00:00+00:00",
+            "status": "awaiting_customer",
+        }
+        with (
+            patch("src.agentcard.service._verify_paypal_eligibility"),
+            patch(
+                "src.agentcard.service._checkout_base_url",
+                return_value="https://shop.example",
+            ),
+            patch(
+                "src.agentcard.service._paypal_integration",
+                return_value="integration-id",
+            ),
+            patch("src.agentcard.service.execute", return_value=rpc_result),
+        ):
+            result = create_agentcard_transaction(
+                client,
+                business_id="business-id",
+                conversation_id="conversation-id",
+                customer_name="Customer",
+                customer_reference="customer-id",
+                items=[
+                    AgentCardItemRequest(
+                        product_id="6ae108fb-138b-4ce8-84cf-c42cb80926ac",
+                        quantity=1,
+                    )
+                ],
+                idempotency_key="idempotency-key",
+                payment_method="card",
+            )
+
+        checkout_url = urlparse(result["checkout_url"])
+        self.assertEqual(checkout_url.scheme, "https")
+        self.assertEqual(checkout_url.netloc, "shop.example")
+        self.assertRegex(checkout_url.path, r"^/checkout/[A-Za-z0-9_-]{43}$")
+        self.assertEqual(parse_qs(checkout_url.query), {"payment_method": ["card"]})
+
     def test_paypal_request_failure_logs_safe_provider_diagnostics(self) -> None:
         request = httpx.Request("POST", "https://api-m.sandbox.paypal.com/v2/checkout/orders")
         response = httpx.Response(
@@ -87,7 +132,12 @@ class PayPalAmountTests(unittest.TestCase):
             json={
                 "name": "INVALID_REQUEST",
                 "message": "Do not log this provider message",
-                "details": [{"issue": "PAYEE_ACCOUNT_RESTRICTED"}],
+                "details": [
+                    {
+                        "issue": "PAYEE_ACCOUNT_RESTRICTED",
+                        "field": "/purchase_units/0/payee",
+                    }
+                ],
             },
             request=request,
         )
@@ -105,6 +155,7 @@ class PayPalAmountTests(unittest.TestCase):
         self.assertIn("debug_id=debug-123", log_entry)
         self.assertIn("error_name=INVALID_REQUEST", log_entry)
         self.assertIn("PAYEE_ACCOUNT_RESTRICTED", log_entry)
+        self.assertIn("/purchase_units/0/payee", log_entry)
         self.assertNotIn("Do not log this provider message", log_entry)
 
     def test_nigeria_is_allowed_only_for_sandbox_when_in_country_allowlist(self) -> None:
@@ -304,11 +355,40 @@ class PayPalAmountTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["application_context"]["return_url"],
-            "https://shop.example/checkout/token?paypal_return=1",
+            "https://shop.example/checkout/token?paypal_return=1&payment_method=paypal",
         )
+        self.assertEqual(payload["application_context"]["landing_page"], "LOGIN")
         self.assertNotIn(
             "{",
             payload["application_context"]["return_url"],
+        )
+
+    @patch("src.agentcard.paypal._authenticated_request")
+    def test_card_preference_requests_paypal_guest_checkout(self, request) -> None:
+        request.return_value = {
+            "id": "ORDER-123",
+            "links": [{"rel": "approve", "href": "https://www.paypal.com/checkout"}],
+        }
+
+        create_paypal_order(
+            {"client_id": "id", "client_secret": "secret"},
+            public_transaction_id="txn_example",
+            business_name="Test business",
+            seller_paypal_email="seller@example.com",
+            amount_minor=100,
+            currency="USD",
+            checkout_url="https://shop.example/checkout/token",
+            payment_method="card",
+        )
+
+        payload = request.call_args.kwargs["payload"]
+        self.assertEqual(
+            payload["application_context"]["landing_page"],
+            "GUEST_CHECKOUT",
+        )
+        self.assertEqual(
+            payload["application_context"]["cancel_url"],
+            "https://shop.example/checkout/token?paypal_cancelled=1&payment_method=card",
         )
 
     @patch("src.agentcard.paypal._access_token", return_value="access-token")

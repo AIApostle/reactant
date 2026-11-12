@@ -11,6 +11,13 @@ Reactant never stores card details or treats a browser redirect as proof of
 payment. The backend verifies a completed capture before updating the order.
 Webhook events are signature-verified and deduplicated.
 
+Before creating checkout, the agent asks whether the customer prefers a PayPal
+account or a debit/credit card. The card option opens PayPal's hosted guest
+checkout when PayPal makes it available for that seller and buyer. This
+after-payment onboarding flow does not support Expanded Checkout's inline card
+fields; use PayPal-hosted checkout rather than collecting card details in
+Reactant.
+
 PayPal Checkout uses Reactant's partner REST app to route buyer payments to
 the business's PayPal account. Business owners enter only their PayPal account
 email; the app client ID, secret, and BN attribution code remain backend-only.
@@ -176,12 +183,15 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
 2. To exercise the agent itself, from a separate customer Telegram account,
    ask about the test product.
 3. Express clear purchase intent and confirm the exact item and quantity when
-   the agent asks. The agent must use the backend checkout tool; it must not
-   invent or calculate a price itself.
+   the agent asks, and state whether you prefer PayPal or a debit/credit card.
+   The agent must use the backend checkout tool; it must not invent or
+   calculate a price itself.
 4. Open the secure checkout URL that the agent sends. Check the merchant,
    items, quantities, currency, and total.
-5. Explicitly accept the displayed checkout consent. Continue to PayPal and
-   sign in with the Sandbox personal buyer account to approve the payment.
+5. Explicitly accept the displayed checkout consent. For PayPal, sign in with
+   the Sandbox personal buyer account. For card, PayPal opens its hosted guest
+   checkout when available; availability depends on PayPal's seller and buyer
+   eligibility.
 6. Return to the Reactant checkout page. The backend retrieves the PayPal
    order and verifies the captured amount/currency before showing payment as
    confirmed. A return redirect by itself is not confirmation.
@@ -199,10 +209,14 @@ states.
 - The backend `PAYPAL_WEBHOOK_IDS` value includes the PayPal integration ID and
   matching webhook ID.
 - The customer checkout displays a server-calculated immutable order snapshot
-  and requires explicit consent.
+  and requires explicit consent. PayPal-hosted checkout offers PayPal account
+  or guest card payment based on the selected preference and PayPal eligibility.
 - `PAYMENT.CAPTURE.COMPLETED` has a valid PayPal signature and its amount,
   currency, and transaction reference match before the order becomes paid.
 - Replayed webhook events do not duplicate payment/order/receipt effects.
+- An authorized owner can ask the Business Agent for recent AgentCard
+  transaction statuses; the agent reads current database status and does not
+  infer payment success from a checkout URL or redirect.
 - Receipts and refunds reach their verified terminal status in the transaction
   ledger.
 

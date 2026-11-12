@@ -3,7 +3,7 @@ import logging
 import re
 from decimal import Decimal
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 import httpx
@@ -39,6 +39,7 @@ def _log_paypal_request_failure(method: str, path: str, error: Exception) -> Non
     )
     error_name = "unknown"
     issue_codes: list[str] = []
+    field_paths: list[str] = []
     if response is not None:
         try:
             body = response.json()
@@ -60,15 +61,21 @@ def _log_paypal_request_failure(method: str, path: str, error: Exception) -> Non
                     for item in details
                     if isinstance(item, dict) and isinstance(item.get("issue"), str)
                 ][:10]
+                field_paths = [
+                    re.sub(r"[^A-Za-z0-9/_.\[\]-]", "_", item["field"])[:128]
+                    for item in details
+                    if isinstance(item, dict) and isinstance(item.get("field"), str)
+                ][:10]
 
     logger.warning(
-        "PayPal API request failed method=%s path=%s status=%s debug_id=%s error_name=%s issue_codes=%s exception_type=%s",
+        "PayPal API request failed method=%s path=%s status=%s debug_id=%s error_name=%s issue_codes=%s field_paths=%s exception_type=%s",
         method,
         path,
         status_code,
         debug_id or "unavailable",
         error_name,
         ",".join(issue_codes) or "unavailable",
+        ",".join(field_paths) or "unavailable",
         type(error).__name__,
     )
 
@@ -299,6 +306,7 @@ def create_paypal_order(
     amount_minor: int,
     currency: str,
     checkout_url: str,
+    payment_method: str = "paypal",
 ) -> tuple[str, str]:
     parsed_checkout_url = urlparse(checkout_url)
     if parsed_checkout_url.scheme != "https" and parsed_checkout_url.hostname not in {
@@ -307,6 +315,12 @@ def create_paypal_order(
     }:
         raise PayPalError("The public checkout URL must use HTTPS.")
     request_id = f"AGC{public_transaction_id.removeprefix('txn_')[:32]}"
+    return_query = urlencode(
+        {"paypal_return": "1", "payment_method": payment_method}
+    )
+    cancel_query = urlencode(
+        {"paypal_cancelled": "1", "payment_method": payment_method}
+    )
     result = _authenticated_request(
         "POST",
         "/v2/checkout/orders",
@@ -329,9 +343,12 @@ def create_paypal_order(
             ],
             "application_context": {
                 "brand_name": business_name[:127],
+                "landing_page": (
+                    "GUEST_CHECKOUT" if payment_method == "card" else "LOGIN"
+                ),
                 "user_action": "PAY_NOW",
-                "return_url": f"{checkout_url}?paypal_return=1",
-                "cancel_url": f"{checkout_url}?paypal_cancelled=1",
+                "return_url": f"{checkout_url}?{return_query}",
+                "cancel_url": f"{checkout_url}?{cancel_query}",
             },
         },
     )
