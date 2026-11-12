@@ -656,13 +656,16 @@ function App() {
             messages: [...item.messages, mapConversationMessage(message)],
           }
         : item))
-      if (message.delivery_status === 'sent') {
-        setReply('')
-        setReplyAttachments([])
-        setToast('Reply sent')
-      } else {
-        setToast('The reply could not be delivered. Check the conversation and try again.')
-      }
+      // The API has saved the message by the time it returns, including when
+      // provider delivery failed. Clear the composer so users don't submit a
+      // duplicate; the message bubble shows the delivery status.
+      setReply('')
+      setReplyAttachments([])
+      setToast(message.delivery_status === 'sent'
+        ? 'Reply sent'
+        : message.delivery_status === 'queued'
+          ? 'Reply queued'
+          : 'Reply saved, but it could not be delivered')
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'The reply could not be sent.')
     } finally {

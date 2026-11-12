@@ -57,7 +57,9 @@ PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
 PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true
 AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
-AGENT_MODEL_PROVIDER=google
+AGENT_MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=<server-only-openrouter-key>
+OPENROUTER_MODEL_ID=openrouter/free
 GEMINI_API_KEY=<server-only-google-ai-studio-key>
 GEMINI_MODEL_ID=gemini-3.8-flash
 GEMINI_VISION_MODEL_ID=gemini-3.8-flash
@@ -88,13 +90,12 @@ doesn't change the PayPal Developer Dashboard setting. For Sandbox, use the
 Sandbox app credentials, BN code, and Sandbox API URL; for production, use the
 Live app credentials, BN code, and Live API URL.
 
-Strands `Agent` orchestrates the conversation and tool calls. Its `GeminiModel`
-uses Google's Gemini API for model inference; the agent still invokes the
-backend's catalog, order-validation, and AgentCard tools. Set `GEMINI_API_KEY`
-and use `GEMINI_MODEL_ID` / `GEMINI_VISION_MODEL_ID` for model selection. Never
-expose the key to the frontend. OpenRouter remains an optional compatibility
-provider only when explicitly selected with `AGENT_MODEL_PROVIDER=openrouter`;
-Gemini then serves as its fallback.
+Strands `Agent` orchestrates the conversation and tool calls. OpenRouter's
+`openrouter/free` model is primary; native Gemini is the failover provider. The
+agent still invokes the backend's catalog, order-validation, and AgentCard
+tools. Configure `OPENROUTER_API_KEY` and `GEMINI_API_KEY` on the backend, and
+use `OPENROUTER_MODEL_ID` / `GEMINI_MODEL_ID` for model selection. Never expose
+either key to the frontend.
 
 ### Vercel frontend environment
 

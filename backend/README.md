@@ -48,7 +48,7 @@ Additional configuration:
   `SUPABASE_SECRET_KEY` and the selected model provider's API key. Keep
   disabled until these credentials and the Supabase
   migration are configured.
-- `AGENT_MODEL_PROVIDER` — `google` (default, native Gemini) or `openrouter`.
+- `AGENT_MODEL_PROVIDER` — `openrouter` (default) or `google` (native Gemini).
 - `GEMINI_API_KEY` — backend-only Google AI Studio key passed to Strands'
   `GeminiModel`. `GOOGLE_API_KEY` is also accepted. Never expose the key to
   the frontend.
@@ -59,11 +59,12 @@ Additional configuration:
   `AGENT_MODEL_PROVIDER=openrouter`.
 - `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs
   for the OpenRouter provider.
-- With the default `AGENT_MODEL_PROVIDER=google`, the agent uses the Gemini
-  API key and Gemini model IDs directly. It does not fall back to OpenRouter.
-  If `AGENT_MODEL_PROVIDER=openrouter` is explicitly selected, Gemini is the
-  failover provider. Provider failures are retried before any partial response
-  or tool call is exposed, so a fallback does not repeat agent side effects.
+- With the default `AGENT_MODEL_PROVIDER=openrouter`, the agent uses
+  `openrouter/free` through OpenRouter's API and falls back to native Gemini
+  when `GEMINI_API_KEY` is configured. Setting
+  `AGENT_MODEL_PROVIDER=google` selects Gemini directly without OpenRouter
+  fallback. Provider failures are retried before any partial response or tool
+  call is exposed, so a fallback does not repeat agent side effects.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
 - `PAYPAL_WEBHOOK_IDS` — backend-only JSON object mapping each PayPal integration
@@ -129,8 +130,8 @@ project before retrying.
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
-- Strands uses Google's native Gemini provider by default. OpenRouter remains
-  available only when `AGENT_MODEL_PROVIDER=openrouter` is explicitly set.
+- Strands uses OpenRouter's free model endpoint by default, with native Gemini
+  as the fallback provider when both keys are configured.
   No MCP server is configured in this project, and the current scoped catalog
   tool does not require one. Do not attach a third-party MCP server without an
   explicit trust and permission review.
