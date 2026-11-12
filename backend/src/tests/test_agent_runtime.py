@@ -249,6 +249,8 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIn("matching catalog images automatically when available", customer_prompt)
         self.assertIn("Do not send product photos", customer_prompt)
         self.assertIn("explicitly asks to see a photo", customer_prompt)
+        self.assertIn("list_available_business_products", customer_prompt)
+        self.assertIn("expected to help complete checkout", customer_prompt)
         owner_prompt = build_business_system_prompt(
             business={"name": "Store"},
             agent_config=None,
@@ -273,7 +275,106 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         self.assertEqual(
             sorted(agent.tool_registry.registry.keys()),
-            ["search_business_products", "search_public_web"],
+            [
+                "list_available_business_products",
+                "search_business_products",
+                "search_public_web",
+            ],
+        )
+
+    def test_customer_agent_can_list_agent_visible_products(self) -> None:
+        product = {
+            "id": str(uuid4()),
+            "name": "Grey Vintage Shirt",
+            "description": "Vintage cotton shirt",
+            "price_minor": 4500,
+            "currency": "NGN",
+            "stock_quantity": 4,
+            "provider_data": {"image_urls": ["https://cdn.example.com/shirt.jpg"]},
+            "image_asset_ids": [],
+        }
+        client = MagicMock()
+        selected_images: list[dict[str, Any]] = []
+        checkout_urls: list[str] = []
+        with (
+            patch("src.agent.runtime.get_memory_config", return_value=None),
+            patch(
+                "src.agent.runtime.get_supabase_settings",
+                return_value=SimpleNamespace(agentcard_enabled=True),
+            ),
+            patch("src.agent.runtime.execute", return_value=[product]),
+            patch(
+                "src.agent.runtime.create_agentcard_transaction_service",
+                return_value={
+                    "checkout_url": "https://checkout.example.com/session",
+                    "public_transaction_id": "transaction-a",
+                    "snapshot": {
+                        "total_amount_minor": 4500,
+                        "currency": "NGN",
+                    },
+                    "expires_at": "2026-11-12T00:00:00+00:00",
+                    "status": "pending",
+                },
+            ) as create_transaction,
+        ):
+            agent = build_business_agent(
+                client=client,
+                business_id="business-a",
+                settings=AgentRuntimeSettings(
+                    agent_model_provider="openrouter",
+                    openrouter_api_key=SecretStr("test-key"),
+                ),
+                business={"name": "Store"},
+                agent_config={
+                    "permissions": {
+                        "create_carts_and_orders": True,
+                        "create_paypal_checkout": True,
+                    }
+                },
+                history=[],
+                audience="customer",
+                conversation_id="conversation-a",
+                idempotency_key="telegram:update-a",
+                created_checkout_urls=checkout_urls,
+                selected_product_images=selected_images,
+            )
+            products = agent.tool_registry.registry[
+                "list_available_business_products"
+            ]._tool_func(limit=8)
+            with self.assertRaises(ValueError):
+                agent.tool_registry.registry[
+                    "list_available_business_products"
+                ]._tool_func(limit=9)
+            checkout = agent.tool_registry.registry[
+                "create_agentcard_transaction"
+            ]._tool_func(
+                items=[{"product_name": "Grey Vintage Shirt", "quantity": 1}]
+            )
+
+        self.assertEqual(products[0]["name"], "Grey Vintage Shirt")
+        self.assertNotIn("product_id", products[0])
+        self.assertEqual(
+            selected_images,
+            [
+                {
+                    "name": "Grey Vintage Shirt",
+                    "image_urls": ["https://cdn.example.com/shirt.jpg"],
+                }
+            ],
+        )
+        self.assertEqual(
+            checkout["checkout_url"], "https://checkout.example.com/session"
+        )
+        self.assertEqual(checkout_urls, ["https://checkout.example.com/session"])
+        self.assertEqual(
+            str(create_transaction.call_args.kwargs["items"][0].product_id),
+            product["id"],
+        )
+        query = client.table.return_value.select.return_value
+        query.eq.assert_called_once_with("business_id", "business-a")
+        query.eq.return_value.eq.assert_called_once_with("status", "active")
+        query.eq.return_value.eq.return_value.eq.assert_called_once_with(
+            "agent_enabled", True
         )
 
     def test_owner_agent_run_has_approval_request_tool(self) -> None:

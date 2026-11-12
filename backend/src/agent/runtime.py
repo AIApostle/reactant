@@ -491,15 +491,22 @@ def build_business_agent(
 ) -> Agent:
     catalog_product_ids: dict[str, set[str]] = {}
 
+    def register_customer_catalog_products(
+        products: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        for product in products:
+            catalog_product_ids.setdefault(
+                str(product["name"]).strip().casefold(), set()
+            ).add(str(product["product_id"]))
+        if audience == "customer":
+            return [customer_catalog_product(product) for product in products]
+        return products
+
     @tool
     def search_business_products(query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Find active catalog products by name. Product IDs are internal and must never be shown to customers. The channel sends product photos only when the customer explicitly asks to see one."""
         products = find_business_products(client, business_id, query, limit)
         if audience == "customer":
-            for product in products:
-                catalog_product_ids.setdefault(
-                    str(product["name"]).strip().casefold(), set()
-                ).add(str(product["product_id"]))
             if selected_product_images is not None:
                 selected_product_images[:] = [
                     {
@@ -509,15 +516,57 @@ def build_business_agent(
                     for product in products
                     if product.get("image_urls")
                 ]
-            return [customer_catalog_product(product) for product in products]
-        return products
+        return register_customer_catalog_products(products)
+
+    @tool
+    def list_available_business_products(limit: int = 8) -> list[dict[str, Any]]:
+        """List active products that are enabled for the customer agent. Use this to check whether the catalog is available when the customer does not name a specific product or a name search returns no matches. An empty name search alone does not mean the catalog is empty."""
+        if not 1 <= limit <= MAX_PRODUCT_SEARCH_RESULTS:
+            raise ValueError(
+                f"Product limit must be between 1 and {MAX_PRODUCT_SEARCH_RESULTS}."
+            )
+        rows = execute(
+            client.table("products")
+            .select(
+                "id,name,description,price_minor,currency,stock_quantity,"
+                "provider_data,image_asset_ids"
+            )
+            .eq("business_id", business_id)
+            .eq("status", "active")
+            .eq("agent_enabled", True)
+            .order("updated_at", desc=True)
+            .limit(limit)
+        )
+        products = [
+            {
+                "product_id": row["id"],
+                "name": row["name"],
+                "description": (row.get("description") or "")[:500],
+                "price_minor": row["price_minor"],
+                "currency": row["currency"],
+                "stock_quantity": row["stock_quantity"],
+                "image_urls": _product_image_urls(client, business_id, row),
+            }
+            for row in rows
+        ]
+        if audience == "customer" and selected_product_images is not None:
+            selected_product_images[:] = [
+                {"name": product["name"], "image_urls": product["image_urls"]}
+                for product in products
+                if product["image_urls"]
+            ]
+        return register_customer_catalog_products(products)
 
     @tool
     def search_public_web(query: str) -> list[dict[str, str]]:
         """Search public web information when the business catalog does not answer the question."""
         return search_web(query)
 
-    tools = [search_business_products, search_public_web]
+    tools = [
+        search_business_products,
+        list_available_business_products,
+        search_public_web,
+    ]
     memory_config = (
         get_memory_config(business_id)
         if audience == "owner" or (memory_opt_in and memory_customer_reference)
