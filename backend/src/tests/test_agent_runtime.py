@@ -811,30 +811,75 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(result["name"], "Shoes")
 
     def test_agent_continues_concisely_after_token_limit(self) -> None:
-        calls: list[tuple[str, Any]] = []
+        class FakeAgent:
+            model = object()
+            messages = []
+            system_prompt = "Customer agent instructions."
 
-        def fake_agent(message: str, *, limits: Any) -> str:
-            calls.append((message, limits))
-            if len(calls) == 1:
+            def __call__(self, *_args: Any, **_kwargs: Any) -> str:
                 raise MaxTokensReachedException("limit reached")
-            return "I couldn't prepare checkout right now."
 
-        response = invoke_business_agent(
-            fake_agent, "Can we check out?", audience="customer"
-        )
+        class RecoveryAgent:
+            def __call__(self, prompt: str, *, limits: Any) -> str:
+                self.prompt = prompt
+                return "Please confirm your order total and choose PayPal or card."
 
-        self.assertEqual(response, "I couldn't prepare checkout right now.")
-        self.assertEqual(len(calls), 2)
-        self.assertIn("Do not repeat actions", calls[1][0])
+        recovery_agent = RecoveryAgent()
+        with patch("src.agent.runtime.Agent", return_value=recovery_agent) as agent_factory:
+            response = invoke_business_agent(
+                FakeAgent(), "Can we check out?", audience="customer"
+            )
+
+        self.assertIn("Please confirm your order total", response)
+        self.assertEqual(agent_factory.call_args.kwargs["tools"], [])
+        self.assertIn("response-only", recovery_agent.prompt)
 
     def test_customer_agent_returns_explicit_message_if_model_returns_no_text(self) -> None:
-        response = invoke_business_agent(
-            lambda *_args, **_kwargs: "",
-            "Can we check out?",
-            audience="customer",
-        )
+        class FakeAgent:
+            model = object()
+            messages = []
+            system_prompt = "Customer agent instructions."
+
+            def __call__(self, *_args: Any, **_kwargs: Any) -> str:
+                return ""
+
+        with patch("src.agent.runtime.Agent", return_value=lambda *_args, **_kwargs: ""):
+            response = invoke_business_agent(
+                FakeAgent(), "Can we check out?", audience="customer"
+            )
 
         self.assertIn("couldn't complete that reply", response)
+
+    def test_customer_agent_recovers_empty_result_without_tools(self) -> None:
+        class FakeAgent:
+            model = object()
+            messages = [{"role": "assistant", "content": [{"text": "Calculated USD 40.00."}]}]
+            system_prompt = "Customer agent instructions."
+
+            def __call__(self, *_args: Any, **_kwargs: Any) -> str:
+                return ""
+
+        class RecoveryAgent:
+            def __call__(self, prompt: str, *, limits: Any) -> str:
+                self.prompt = prompt
+                self.limits = limits
+                return (
+                    "Two Lion Vintage T shirts and two Grey Vintage Shirts total "
+                    "USD 40.00. Please confirm and choose PayPal or card."
+                )
+
+        recovery_agent = RecoveryAgent()
+        with patch("src.agent.runtime.Agent", return_value=recovery_agent) as agent_factory:
+            response = invoke_business_agent(
+                FakeAgent(),
+                "Let's proceed with two shirts of each type.",
+                audience="customer",
+            )
+
+        self.assertIn("Please confirm and choose PayPal or card.", response)
+        self.assertEqual(agent_factory.call_args.kwargs["tools"], [])
+        self.assertIn("response-only", recovery_agent.prompt)
+        self.assertEqual(recovery_agent.limits["turns"], 1)
 
     def test_customer_checkout_resolves_only_products_from_catalog_search(self) -> None:
         items = resolve_customer_checkout_items(

@@ -1,3 +1,4 @@
+from copy import deepcopy
 import hashlib
 import logging
 import re
@@ -35,6 +36,20 @@ MAX_AGENT_TOTAL_TOKENS = 8000
 MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_PRODUCT_IMAGE_RESULTS = 3
+CUSTOMER_FINAL_RESPONSE_PROMPT = """
+Write one concise customer-facing reply using the conversation and completed
+tool results above. This is response-only: you have no tools and must not repeat
+or claim any new action.
+- If an exact total was calculated but the customer has not confirmed it, give
+  the exact item names, quantities, unit prices, and line totals from the tool
+  results, then ask them to confirm the total and choose PayPal or card.
+- If the total is already confirmed but the payment preference is missing, ask
+  only which method they prefer.
+- If required product or quantity information is still missing, ask one focused
+  question. Do not invent catalog or price information.
+- If completed tool results contain a checkout URL, say checkout is ready and
+  remind the customer to review the amount there. Do not construct a URL.
+"""
 CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA = {
     "json": {
         "type": "object",
@@ -943,27 +958,26 @@ def invoke_business_agent(
         logger.warning(
             "Agent response reached its token limit; requesting a concise continuation"
         )
-        try:
-            result = agent(
-                "Continue with one concise final response using completed tool results. "
-                "Do not repeat actions that already succeeded.",
-                limits=Limits(turns=2, output_tokens=400, total_tokens=2000),
+        if audience == "customer":
+            response = _recover_customer_final_response(agent)
+            if response:
+                return sanitize_customer_response(response)[:10000]
+            return (
+                "I couldn't finish my reply just now because of a system limit. "
+                "Please try again or contact the store team."
             )
-        except MaxTokensReachedException:
-            logger.exception("Agent continuation also reached its token limit")
-            if audience == "customer":
-                return (
-                    "I couldn't finish my reply just now because of a system limit. "
-                    "Please try again or contact the store team."
-                )
-            raise
+        raise
     response = str(result).strip()
     if not response:
-        logger.error(
-            "Agent returned no text after invocation audience=%s",
+        logger.warning(
+            "Agent returned no final text audience=%s stop_reason=%s",
             audience,
+            getattr(result, "stop_reason", "unknown"),
         )
         if audience == "customer":
+            response = _recover_customer_final_response(agent)
+            if response:
+                return sanitize_customer_response(response)[:10000]
             return (
                 "I couldn't complete that reply just now. Please try again, "
                 "or contact the store team for help."
@@ -971,3 +985,27 @@ def invoke_business_agent(
         raise RuntimeError("The agent returned no text response.")
     response = sanitize_customer_response(response) if audience == "customer" else response
     return response[:10000]
+
+
+def _recover_customer_final_response(agent: Agent) -> str:
+    try:
+        response_agent = Agent(
+            model=agent.model,
+            messages=deepcopy(agent.messages),
+            tools=[],
+            system_prompt=agent.system_prompt,
+        )
+        return str(
+            response_agent(
+                CUSTOMER_FINAL_RESPONSE_PROMPT,
+                limits=Limits(turns=1, output_tokens=600, total_tokens=2000),
+            )
+        ).strip()
+    except MaxTokensReachedException:
+        logger.exception("Customer final-response recovery reached its token limit")
+    except Exception as error:
+        logger.exception(
+            "Customer final-response recovery failed exception_type=%s",
+            type(error).__name__,
+        )
+    return ""
