@@ -149,6 +149,64 @@ class AgentEnablementTests(unittest.TestCase):
         build_agent.assert_not_called()
         send_message.assert_not_called()
 
+    def test_telegram_logs_agent_invocation_exception_details(self) -> None:
+        client = Client()
+        conversation_id = "conversation-id"
+        execute_results = [
+            [],
+            {"id": conversation_id},
+            {"id": "customer-message-id"},
+            {},
+            {"name": "Test Business"},
+            {"enabled": True},
+            [],
+            None,
+            None,
+            None,
+        ]
+        with (
+            patch.object(webhook_routes, "execute", side_effect=execute_results),
+            patch.object(webhook_routes, "_handle_owner_telegram_update", return_value=False),
+            patch.object(webhook_routes, "_telegram_message_images", return_value=[]),
+            patch.object(
+                webhook_routes,
+                "get_agent_runtime_settings",
+                return_value=SimpleNamespace(
+                    strands_agent_enabled=True,
+                    has_model_api_key=True,
+                ),
+            ),
+            patch.object(webhook_routes, "build_business_agent"),
+            patch.object(
+                webhook_routes,
+                "invoke_business_agent",
+                side_effect=RuntimeError("test model failure"),
+            ),
+            patch.object(webhook_routes, "_telegram_send_message") as send_message,
+            self.assertLogs(webhook_routes.logger, level="ERROR") as captured,
+        ):
+            webhook_routes._process_telegram_update(
+                client,
+                channel_id=uuid4(),
+                business_id=uuid4(),
+                credentials={"bot_token": "test-token"},
+                payload={
+                    "update_id": 125,
+                    "message": {
+                        "chat": {"id": 456},
+                        "from": {"id": 456, "first_name": "Customer"},
+                        "text": "Hi",
+                    },
+                },
+            )
+
+        self.assertIn("test model failure", "\n".join(captured.output))
+        send_message.assert_called_once()
+        self.assertIn(
+            "I'm temporarily unable to complete that reply.",
+            send_message.call_args.args[2],
+        )
+
     def test_website_chat_does_not_reply_when_business_agent_is_disabled(self) -> None:
         with (
             patch.object(

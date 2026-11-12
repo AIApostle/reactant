@@ -740,7 +740,7 @@ def _process_telegram_update(
             images=customer_images,
         )
     except Exception as error:
-        logger.error(
+        logger.exception(
             "Telegram customer agent invocation failed business_id=%s conversation_id=%s exception_type=%s",
             business_id,
             conversation["id"],
