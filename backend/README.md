@@ -45,26 +45,13 @@ Additional configuration:
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.
 - `STRANDS_AGENT_ENABLED=true` — opt in to the Strands background worker,
   owner-assistant runtime, and website chat agent. Requires
-  `SUPABASE_SECRET_KEY` and the selected model provider's API key. Keep
+  `SUPABASE_SECRET_KEY` and `OPENROUTER_API_KEY`. Keep
   disabled until these credentials and the Supabase
   migration are configured.
-- `AGENT_MODEL_PROVIDER` — `openrouter` (default) or `google` (native Gemini).
-- `GEMINI_API_KEY` — backend-only Google AI Studio key passed to Strands'
-  `GeminiModel`. `GOOGLE_API_KEY` is also accepted. Never expose the key to
-  the frontend.
-- `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` — optional Gemini model IDs;
-  both default to the stable `gemini-3.8-flash` model. Older 2.5 Flash values
-  are normalized to 3.8 Flash.
-- `OPENROUTER_API_KEY` — backend-only OpenRouter key, used when
-  `AGENT_MODEL_PROVIDER=openrouter`.
-- `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs
-  for the OpenRouter provider.
-- With the default `AGENT_MODEL_PROVIDER=openrouter`, the agent uses
-  `openrouter/free` through OpenRouter's API and falls back to native Gemini
-  when `GEMINI_API_KEY` is configured. Setting
-  `AGENT_MODEL_PROVIDER=google` selects Gemini directly without OpenRouter
-  fallback. Provider failures are retried before any partial response or tool
-  call is exposed, so a fallback does not repeat agent side effects.
+- `OPENROUTER_API_KEY` — backend-only OpenRouter key. The agent uses only
+  OpenRouter's `openrouter/free` router for both text and vision requests.
+  Model selection is intentionally fixed; no provider or model override is
+  supported. Never expose this key to the frontend.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
 - `PAYPAL_WEBHOOK_IDS` — backend-only JSON object mapping each PayPal integration
@@ -130,8 +117,8 @@ project before retrying.
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
-- Strands uses OpenRouter's free model endpoint by default, with native Gemini
-  as the fallback provider when both keys are configured.
+- Strands uses only OpenRouter's `openrouter/free` model endpoint. There is no
+  alternate provider or model override.
   No MCP server is configured in this project, and the current scoped catalog
   tool does not require one. Do not attach a third-party MCP server without an
   explicit trust and permission review.
@@ -142,7 +129,7 @@ project before retrying.
   webhooks, refunds, reconciliation, and receipts. Seller onboarding and
   payment capabilities still require PayPal approval and dashboard setup.
 - Strands `Agent` remains the orchestration runtime: it manages the conversation
-  loop and invokes registered tools. `GeminiModel` supplies model inference;
+  loop and invokes registered tools. OpenRouter supplies model inference;
   catalog lookup, total calculation, and AgentCard transaction creation remain
   backend tools with server-side validation.
 - AgentCard is disabled until `AGENTCARD_ENABLED=true`, PayPal seller

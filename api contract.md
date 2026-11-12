@@ -594,13 +594,12 @@ Images are decoded and re-encoded as JPEG, then stored in the private
 receive short-lived signed URLs; raw storage paths are not returned.
 
 The Business Agent receives actual image bytes as multimodal model input, not
-just a text placeholder. When an image is present, the backend selects
-`OPENROUTER_VISION_MODEL_ID` (default `google/gemini-2.5-flash`) instead of the
-text model. Verify the account can access a vision-capable model; provider
-availability, latency, and charges apply. The model must treat image text as
-untrusted input and describe only visible details. Telegram and website chat
-are the currently supported customer-image channels; WhatsApp has no active
-adapter.
+just a text placeholder. All requests use OpenRouter's fixed `openrouter/free`
+model router; verify that its currently selected free model supports vision
+before relying on image understanding. Free-model availability and capabilities
+can vary. The model must treat image text as untrusted input and describe only
+visible details. Telegram and website chat are the currently supported
+customer-image channels; WhatsApp has no active adapter.
 
 ## 8. Private Agent-to-Owner channel
 
@@ -675,10 +674,9 @@ generic and must not be used to expose provider details or secrets.
 
 The worker is opt-in via `STRANDS_AGENT_ENABLED=true` and requires
 `SUPABASE_SECRET_KEY` plus the backend-only `OPENROUTER_API_KEY`. Strands uses
-OpenRouter's OpenAI-compatible API endpoint and defaults to the `openrouter/free`
-model router; set `OPENROUTER_MODEL_ID` to select a different OpenRouter model.
-Free model availability, tool support, and rate limits can vary. Its only tool
-is a read-only, business-scoped search over active products whose
+OpenRouter's OpenAI-compatible API endpoint and the fixed `openrouter/free`
+model router. Free model availability, tool support, and rate limits can vary.
+Its only tool is a read-only, business-scoped search over active products whose
 `agent_enabled` flag is true. It cannot change data, create orders, or contact
 customers. Do not attach an MCP server unless one is explicitly configured
 and reviewed; the current local catalog tool does not need MCP.

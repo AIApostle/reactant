@@ -1,26 +1,17 @@
 import hashlib
 import logging
 import re
-import threading
-from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any
 
 import httpx
 from fastapi import HTTPException
-from google.genai.errors import APIError as GoogleAPIError
-from openai import APIError as OpenAIAPIError
 from pydantic import BaseModel, ConfigDict, Field
 from storage3.utils import StorageException
 
 from strands import Agent, tool
-from strands.models.gemini import GeminiModel
-from strands.models.model import Model
 from strands.models.openai import OpenAIModel
 from strands.types.agent import Limits
-from strands.types.content import Messages, SystemContentBlock
-from strands.types.exceptions import MaxTokensReachedException, ModelThrottledException
-from strands.types.streaming import StreamEvent
-from strands.types.tools import ToolChoice, ToolSpec
+from strands.types.exceptions import MaxTokensReachedException
 from supabase import Client
 
 from src.agent.config import AgentRuntimeSettings
@@ -76,7 +67,6 @@ CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA = {
     }
 }
 logger = logging.getLogger(__name__)
-PROVIDER_FAILURES = (ModelThrottledException, GoogleAPIError, OpenAIAPIError)
 PRODUCT_IMAGE_REQUEST = re.compile(
     r"\b(image|images|photo|photos|picture|pictures|show me|send me|see it)\b",
     re.I,
@@ -112,148 +102,6 @@ class CustomerOrderItem(BaseModel):
         le=10000,
         description="Whole number of units requested.",
     )
-
-
-class FailoverModel(Model):
-    def __init__(
-        self,
-        primary: Model,
-        fallback: Model,
-        *,
-        primary_provider: str,
-        fallback_provider: str,
-        business_id: str,
-    ) -> None:
-        self.primary = primary
-        self.fallback = fallback
-        self.primary_provider = primary_provider
-        self.fallback_provider = fallback_provider
-        self.business_id = business_id
-        self._fallback_active = False
-
-    def update_config(self, **model_config: Any) -> None:
-        self.primary.update_config(**model_config)
-        self.fallback.update_config(**model_config)
-
-    def get_config(self) -> Any:
-        return self.primary.get_config()
-
-    async def stream(
-        self,
-        messages: Messages,
-        tool_specs: list[ToolSpec] | None = None,
-        system_prompt: str | None = None,
-        *,
-        tool_choice: ToolChoice | None = None,
-        system_prompt_content: list[SystemContentBlock] | None = None,
-        invocation_state: dict[str, Any] | None = None,
-        cancel_signal: threading.Event | None = None,
-        agent_metadata: Any = None,
-        structured_output_model: type[BaseModel] | None = None,
-        **kwargs: Any,
-    ) -> AsyncGenerator[StreamEvent, None]:
-        if self._fallback_active:
-            events = [
-                event
-                async for event in self.fallback.stream(
-                    messages,
-                    tool_specs,
-                    system_prompt,
-                    tool_choice=tool_choice,
-                    system_prompt_content=system_prompt_content,
-                    invocation_state=invocation_state,
-                    cancel_signal=cancel_signal,
-                    agent_metadata=agent_metadata,
-                    structured_output_model=structured_output_model,
-                    **kwargs,
-                )
-            ]
-        else:
-            try:
-                events = [
-                    event
-                    async for event in self.primary.stream(
-                        messages,
-                        tool_specs,
-                        system_prompt,
-                        tool_choice=tool_choice,
-                        system_prompt_content=system_prompt_content,
-                        invocation_state=invocation_state,
-                        cancel_signal=cancel_signal,
-                        agent_metadata=agent_metadata,
-                        structured_output_model=structured_output_model,
-                        **kwargs,
-                    )
-                ]
-            except PROVIDER_FAILURES as error:
-                self._fallback_active = True
-                logger.warning(
-                    "Agent model provider failed; switching to fallback for this run "
-                    "business_id=%s primary=%s fallback=%s exception_type=%s",
-                    self.business_id,
-                    self.primary_provider,
-                    self.fallback_provider,
-                    type(error).__name__,
-                )
-                events = [
-                    event
-                    async for event in self.fallback.stream(
-                        messages,
-                        tool_specs,
-                        system_prompt,
-                        tool_choice=tool_choice,
-                        system_prompt_content=system_prompt_content,
-                        invocation_state=invocation_state,
-                        cancel_signal=cancel_signal,
-                        agent_metadata=agent_metadata,
-                        structured_output_model=structured_output_model,
-                        **kwargs,
-                    )
-                ]
-        for event in events:
-            yield event
-
-    async def structured_output(
-        self,
-        output_model: type[BaseModel],
-        prompt: Messages,
-        system_prompt: str | None = None,
-        **kwargs: Any,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        if self._fallback_active:
-            results = [
-                result
-                async for result in self.fallback.structured_output(
-                    output_model, prompt, system_prompt, **kwargs
-                )
-            ]
-        else:
-            try:
-                results = [
-                    result
-                    async for result in self.primary.structured_output(
-                        output_model, prompt, system_prompt, **kwargs
-                    )
-                ]
-            except PROVIDER_FAILURES as error:
-                self._fallback_active = True
-                logger.warning(
-                    "Agent model provider failed during structured output; switching "
-                    "to fallback for this run business_id=%s primary=%s fallback=%s "
-                    "exception_type=%s",
-                    self.business_id,
-                    self.primary_provider,
-                    self.fallback_provider,
-                    type(error).__name__,
-                )
-                results = [
-                    result
-                    async for result in self.fallback.structured_output(
-                        output_model, prompt, system_prompt, **kwargs
-                    )
-                ]
-        for result in results:
-            yield result
 
 
 def sanitize_customer_response(text: str) -> str:
@@ -474,46 +322,20 @@ def find_business_products(
     ]
 
 
-def _create_provider_model(
+def _create_openrouter_model(
     settings: AgentRuntimeSettings,
-    provider: str,
     *,
     vision: bool,
-) -> Model | None:
-    if provider == "google":
-        api_key = settings.gemini_api_key
-        if api_key is None:
-            return None
-        return GeminiModel(
-            client_args={"api_key": api_key.get_secret_value()},
-            model_id=settings.selected_model_id(vision=vision)
-            if settings.agent_model_provider == provider
-            else (
-                settings.gemini_vision_model_id
-                if vision
-                else settings.gemini_model_id
-            ),
-            params={"max_output_tokens": MAX_AGENT_OUTPUT_TOKENS},
-        )
-
+) -> OpenAIModel | None:
     api_key = settings.openrouter_api_key
     if api_key is None:
         return None
-    model_id = (
-        settings.selected_model_id(vision=vision)
-        if settings.agent_model_provider == provider
-        else (
-            settings.openrouter_vision_model_id
-            if vision
-            else settings.openrouter_model_id
-        )
-    )
     return OpenAIModel(
         client_args={
             "api_key": api_key.get_secret_value(),
             "base_url": "https://openrouter.ai/api/v1",
         },
-        model_id=model_id,
+        model_id=settings.selected_model_id(vision=vision),
         params={"max_tokens": MAX_AGENT_OUTPUT_TOKENS},
     )
 
@@ -996,42 +818,9 @@ def build_business_agent(
             ",".join(checkout_tool_reasons),
         )
 
-    fallback_provider = (
-        "google" if settings.agent_model_provider != "google" else None
-    )
-    primary_model = _create_provider_model(
-        settings,
-        settings.agent_model_provider,
-        vision=vision_enabled,
-    )
-    fallback_model = (
-        _create_provider_model(settings, fallback_provider, vision=vision_enabled)
-        if fallback_provider is not None
-        else None
-    )
-    if primary_model is None and fallback_model is None:
-        raise RuntimeError(
-            "Configure GEMINI_API_KEY or OPENROUTER_API_KEY for the agent provider."
-        )
-    if primary_model is None:
-        logger.warning(
-            "Primary agent model provider has no API key; using fallback "
-            "business_id=%s primary=%s fallback=%s",
-            business_id,
-            settings.agent_model_provider,
-            fallback_provider,
-        )
-        model = fallback_model
-    elif fallback_model is None or fallback_provider is None:
-        model = primary_model
-    else:
-        model = FailoverModel(
-            primary_model,
-            fallback_model,
-            primary_provider=settings.agent_model_provider,
-            fallback_provider=fallback_provider,
-            business_id=business_id,
-        )
+    model = _create_openrouter_model(settings, vision=vision_enabled)
+    if model is None:
+        raise RuntimeError("Configure OPENROUTER_API_KEY for the agent runtime.")
 
     system_prompt = build_business_system_prompt(
         business=business,

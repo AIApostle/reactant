@@ -9,14 +9,12 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from pydantic import SecretStr
-from strands.models.gemini import GeminiModel
 from strands.models.openai import OpenAIModel
-from strands.types.exceptions import MaxTokensReachedException, ModelThrottledException
+from strands.types.exceptions import MaxTokensReachedException
 
 from src.agent import worker as agent_worker
 from src.agent.config import AgentRuntimeSettings
 from src.agent.runtime import (
-    FailoverModel,
     build_business_agent,
     customer_catalog_product,
     find_business_products,
@@ -184,40 +182,13 @@ class OwnerAssistantRoutesTests(unittest.TestCase):
 
 
 class AgentRuntimeTests(unittest.TestCase):
-    def test_google_api_key_environment_names_are_supported(self) -> None:
-        for key_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
-            with self.subTest(key_name=key_name), patch.dict(
-                os.environ,
-                {
-                    "SUPABASE_URL": "https://example.supabase.co",
-                    "AGENT_MODEL_PROVIDER": "google",
-                    key_name: "test-google-key",
-                },
-                clear=True,
-            ):
-                settings = AgentRuntimeSettings(_env_file=None)
-
-            self.assertEqual(settings.agent_model_provider, "google")
-            self.assertEqual(settings.model_api_key.get_secret_value(), "test-google-key")
-            self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
-
-    def test_google_is_default_agent_provider(self) -> None:
+    def test_openrouter_free_model_is_the_only_configured_provider(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = AgentRuntimeSettings(_env_file=None)
 
-        self.assertEqual(settings.agent_model_provider, "google")
-        self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
-        self.assertEqual(settings.selected_model_id(), "gemini-3.8-flash")
-
-    def test_retired_gemini_model_setting_is_upgraded(self) -> None:
-        settings = AgentRuntimeSettings(
-            agent_model_provider="google",
-            gemini_model_id="gemini-2.5-flash",
-            gemini_vision_model_id="gemini-2.5-flash",
-        )
-
-        self.assertEqual(settings.selected_model_id(), "gemini-3.8-flash")
-        self.assertEqual(settings.selected_model_id(vision=True), "gemini-3.8-flash")
+        self.assertEqual(settings.required_api_key_name, "OPENROUTER_API_KEY")
+        self.assertEqual(settings.selected_model_id(), "openrouter/free")
+        self.assertEqual(settings.selected_model_id(vision=True), "openrouter/free")
 
     def test_system_prompt_contains_business_context_and_safety_rules(self) -> None:
         prompt = build_business_system_prompt(
@@ -274,7 +245,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
@@ -331,7 +301,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
@@ -443,7 +412,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
@@ -475,7 +443,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
@@ -513,7 +480,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
@@ -550,7 +516,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
@@ -582,7 +547,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
@@ -624,7 +588,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=client,
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store"},
@@ -667,7 +630,6 @@ class AgentRuntimeTests(unittest.TestCase):
                 client=ProductClient(),
                 business_id="business-a",
                 settings=AgentRuntimeSettings(
-                    agent_model_provider="openrouter",
                     openrouter_api_key=SecretStr("test-key"),
                 ),
                 business={"name": "Store", "country": "US", "currency": "USD"},
@@ -826,7 +788,6 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_agent_uses_openrouter_free_model_with_configured_api_key(self) -> None:
         settings = AgentRuntimeSettings(
             _env_file=None,
-            agent_model_provider="openrouter",
             openrouter_api_key=SecretStr("test-key"),
         )
         agent = build_business_agent(
@@ -846,123 +807,10 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
-    def test_agent_uses_native_gemini_model_when_selected(self) -> None:
-        settings = AgentRuntimeSettings(
-            _env_file=None,
-            agent_model_provider="google",
-            gemini_api_key=SecretStr("test-key"),
-        )
-        agent = build_business_agent(
-            client=ProductClient(),
-            business_id="business-a",
-            settings=settings,
-            business={"name": "Store", "country": "US", "currency": "USD"},
-            agent_config=None,
-            history=[],
-        )
-
-        self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
-        self.assertEqual(agent.model.client_args["api_key"], "test-key")
-
-    def test_agent_configures_openrouter_to_gemini_failover(self) -> None:
-        settings = AgentRuntimeSettings(
-            _env_file=None,
-            agent_model_provider="openrouter",
-            openrouter_api_key=SecretStr("openrouter-key"),
-            gemini_api_key=SecretStr("gemini-key"),
-        )
-        agent = build_business_agent(
-            client=ProductClient(),
-            business_id="business-a",
-            settings=settings,
-            business={"name": "Store"},
-            agent_config=None,
-            history=[],
-        )
-
-        self.assertIsInstance(agent.model, FailoverModel)
-        self.assertIsInstance(agent.model.primary, OpenAIModel)
-        self.assertIsInstance(agent.model.fallback, GeminiModel)
-
-    def test_gemini_primary_does_not_fall_back_to_openrouter(self) -> None:
-        settings = AgentRuntimeSettings(
-            _env_file=None,
-            agent_model_provider="google",
-            gemini_api_key=SecretStr("gemini-key"),
-            openrouter_api_key=SecretStr("openrouter-key"),
-        )
-        agent = build_business_agent(
-            client=ProductClient(),
-            business_id="business-a",
-            settings=settings,
-            business={"name": "Store"},
-            agent_config=None,
-            history=[],
-        )
-
-        self.assertIsInstance(agent.model, GeminiModel)
-
-    def test_agent_uses_fallback_when_primary_key_is_missing(self) -> None:
-        settings = AgentRuntimeSettings(
-            _env_file=None,
-            agent_model_provider="openrouter",
-            gemini_api_key=SecretStr("gemini-key"),
-        )
-        agent = build_business_agent(
-            client=ProductClient(),
-            business_id="business-a",
-            settings=settings,
-            business={"name": "Store"},
-            agent_config=None,
-            history=[],
-        )
-
-        self.assertIsInstance(agent.model, GeminiModel)
-
-    def test_failover_discards_partial_primary_stream_before_retry(self) -> None:
-        class FakeModel:
-            def __init__(self, events: list[dict[str, Any]], error: Exception | None = None):
-                self.events = events
-                self.error = error
-
-            async def stream(self, *args: Any, **kwargs: Any):
-                for event in self.events:
-                    yield event
-                if self.error is not None:
-                    raise self.error
-
-            def get_config(self) -> dict[str, str]:
-                return {"model_id": "fake"}
-
-            def update_config(self, **model_config: Any) -> None:
-                pass
-
-            async def structured_output(self, *args: Any, **kwargs: Any):
-                if False:
-                    yield {}
-
-        primary_partial = {"contentBlockDelta": {"delta": {"text": "partial"}}}
-        fallback_result = {"contentBlockDelta": {"delta": {"text": "fallback"}}}
-        model = FailoverModel(
-            FakeModel([primary_partial], ModelThrottledException("temporarily limited")),
-            FakeModel([fallback_result]),
-            primary_provider="google",
-            fallback_provider="openrouter",
-            business_id="business-a",
-        )
-
-        async def collect() -> list[dict[str, Any]]:
-            return [event async for event in model.stream([])]
-
-        self.assertEqual(asyncio.run(collect()), [fallback_result])
-
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:
         settings = AgentRuntimeSettings(
             _env_file=None,
-            agent_model_provider="openrouter",
             openrouter_api_key=SecretStr("test-key"),
-            openrouter_vision_model_id="test/vision-model",
         )
         agent = build_business_agent(
             client=ProductClient(),
@@ -974,8 +822,20 @@ class AgentRuntimeTests(unittest.TestCase):
             audience="customer",
             vision_enabled=True,
         )
-        model = agent.model.primary if isinstance(agent.model, FailoverModel) else agent.model
-        self.assertEqual(model.config["model_id"], "test/vision-model")
+        self.assertIsInstance(agent.model, OpenAIModel)
+        self.assertEqual(agent.model.config["model_id"], "openrouter/free")
+
+    def test_agent_requires_openrouter_key_without_provider_fallback(self) -> None:
+        settings = AgentRuntimeSettings(_env_file=None)
+        with self.assertRaisesRegex(RuntimeError, "OPENROUTER_API_KEY"):
+            build_business_agent(
+                client=ProductClient(),
+                business_id="business-a",
+                settings=settings,
+                business={"name": "Store"},
+                agent_config=None,
+                history=[],
+            )
 
     def test_product_search_is_tenant_scoped_and_limits_returned_fields(self) -> None:
         client = ProductClient()
