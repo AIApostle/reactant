@@ -756,6 +756,17 @@ def _process_telegram_update(
                 "I'm temporarily unable to complete that reply. No checkout or payment "
                 "was created. Please try again shortly or contact the store team."
             )
+    if not created_checkout_urls and checkout_errors:
+        if checkout_errors[-1] == "paypal_merchant_ineligible":
+            response_text = (
+                "I couldn't prepare checkout because the business's PayPal receiving "
+                "country is not enabled for this environment. Please contact the store team."
+            )
+        else:
+            response_text = (
+                "I couldn't prepare a secure checkout right now. No order or payment "
+                "was created. Please try again later or contact the store team."
+            )
     image_requested = _wants_product_images(text)
     image_products = selected_product_images
     if image_requested:

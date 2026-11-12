@@ -129,6 +129,7 @@ class FailoverModel(Model):
         self.primary_provider = primary_provider
         self.fallback_provider = fallback_provider
         self.business_id = business_id
+        self._fallback_active = False
 
     def update_config(self, **model_config: Any) -> None:
         self.primary.update_config(**model_config)
@@ -151,31 +152,7 @@ class FailoverModel(Model):
         structured_output_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
-        try:
-            events = [
-                event
-                async for event in self.primary.stream(
-                    messages,
-                    tool_specs,
-                    system_prompt,
-                    tool_choice=tool_choice,
-                    system_prompt_content=system_prompt_content,
-                    invocation_state=invocation_state,
-                    cancel_signal=cancel_signal,
-                    agent_metadata=agent_metadata,
-                    structured_output_model=structured_output_model,
-                    **kwargs,
-                )
-            ]
-        except PROVIDER_FAILURES as error:
-            logger.warning(
-                "Agent model provider failed; retrying with fallback "
-                "business_id=%s primary=%s fallback=%s exception_type=%s",
-                self.business_id,
-                self.primary_provider,
-                self.fallback_provider,
-                type(error).__name__,
-            )
+        if self._fallback_active:
             events = [
                 event
                 async for event in self.fallback.stream(
@@ -191,6 +168,48 @@ class FailoverModel(Model):
                     **kwargs,
                 )
             ]
+        else:
+            try:
+                events = [
+                    event
+                    async for event in self.primary.stream(
+                        messages,
+                        tool_specs,
+                        system_prompt,
+                        tool_choice=tool_choice,
+                        system_prompt_content=system_prompt_content,
+                        invocation_state=invocation_state,
+                        cancel_signal=cancel_signal,
+                        agent_metadata=agent_metadata,
+                        structured_output_model=structured_output_model,
+                        **kwargs,
+                    )
+                ]
+            except PROVIDER_FAILURES as error:
+                self._fallback_active = True
+                logger.warning(
+                    "Agent model provider failed; switching to fallback for this run "
+                    "business_id=%s primary=%s fallback=%s exception_type=%s",
+                    self.business_id,
+                    self.primary_provider,
+                    self.fallback_provider,
+                    type(error).__name__,
+                )
+                events = [
+                    event
+                    async for event in self.fallback.stream(
+                        messages,
+                        tool_specs,
+                        system_prompt,
+                        tool_choice=tool_choice,
+                        system_prompt_content=system_prompt_content,
+                        invocation_state=invocation_state,
+                        cancel_signal=cancel_signal,
+                        agent_metadata=agent_metadata,
+                        structured_output_model=structured_output_model,
+                        **kwargs,
+                    )
+                ]
         for event in events:
             yield event
 
@@ -201,29 +220,38 @@ class FailoverModel(Model):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        try:
-            results = [
-                result
-                async for result in self.primary.structured_output(
-                    output_model, prompt, system_prompt, **kwargs
-                )
-            ]
-        except PROVIDER_FAILURES as error:
-            logger.warning(
-                "Agent model provider failed during structured output; retrying "
-                "with fallback business_id=%s primary=%s fallback=%s "
-                "exception_type=%s",
-                self.business_id,
-                self.primary_provider,
-                self.fallback_provider,
-                type(error).__name__,
-            )
+        if self._fallback_active:
             results = [
                 result
                 async for result in self.fallback.structured_output(
                     output_model, prompt, system_prompt, **kwargs
                 )
             ]
+        else:
+            try:
+                results = [
+                    result
+                    async for result in self.primary.structured_output(
+                        output_model, prompt, system_prompt, **kwargs
+                    )
+                ]
+            except PROVIDER_FAILURES as error:
+                self._fallback_active = True
+                logger.warning(
+                    "Agent model provider failed during structured output; switching "
+                    "to fallback for this run business_id=%s primary=%s fallback=%s "
+                    "exception_type=%s",
+                    self.business_id,
+                    self.primary_provider,
+                    self.fallback_provider,
+                    type(error).__name__,
+                )
+                results = [
+                    result
+                    async for result in self.fallback.structured_output(
+                        output_model, prompt, system_prompt, **kwargs
+                    )
+                ]
         for result in results:
             yield result
 

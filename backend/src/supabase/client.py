@@ -32,7 +32,7 @@ class SupabaseSettings(BaseSettings):
     internal_service_token: SecretStr | None = None
     allowed_web_origins: str = ""
     paypal_api_base_url: str = "https://api-m.sandbox.paypal.com"
-    paypal_receiving_countries: str = "US"
+    paypal_receiving_countries: str = "US,NG"
     agentcard_enabled: bool = False
     paypal_onboarding_after_payment_enabled: bool = False
     public_api_base_url: str | None = None

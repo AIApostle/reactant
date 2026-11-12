@@ -61,10 +61,10 @@ PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US,NG
 STRANDS_AGENT_ENABLED=true
-AGENT_MODEL_PROVIDER=openrouter
-OPENROUTER_API_KEY=<backend-only-openrouter-key>
+AGENT_MODEL_PROVIDER=google
 GEMINI_API_KEY=<backend-only-google-ai-studio-key>
-GEMINI_MODEL_ID=gemini-3.6-flash # Gemini failover when both keys are configured
+GEMINI_MODEL_ID=gemini-3.8-flash
+GEMINI_VISION_MODEL_ID=gemini-3.8-flash
 ```
 
 Keep only the merchant countries you intend to support in
@@ -269,7 +269,7 @@ Before provider testing, provide or configure:
 - The first test catalog product data and image.
 - A confirmed country supported by the configured PayPal receiving-country
   allowlist.
-- OpenRouter access to the configured vision-capable model.
+- Google AI Studio access with an enabled Gemini API key and vision-capable model.
 
 Store deployment secrets in Render's environment settings or a secret manager.
 Enter per-business Telegram credentials only through the hosted Integrations

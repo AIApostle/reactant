@@ -14,13 +14,13 @@ class AgentRuntimeSettings(BaseSettings):
     )
 
     strands_agent_enabled: bool = False
-    agent_model_provider: Literal["google", "openrouter"] = "openrouter"
+    agent_model_provider: Literal["google", "openrouter"] = "google"
     gemini_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
-    gemini_model_id: str = "gemini-3.6-flash"
-    gemini_vision_model_id: str = "gemini-3.6-flash"
+    gemini_model_id: str = "gemini-3.8-flash"
+    gemini_vision_model_id: str = "gemini-3.8-flash"
     openrouter_api_key: SecretStr | None = None
     openrouter_model_id: str = "openrouter/free"
     openrouter_vision_model_id: str = "google/gemini-2.5-flash"
@@ -32,9 +32,8 @@ class AgentRuntimeSettings(BaseSettings):
         if value in {
             "gemini-2.5-flash",
             "models/gemini-2.5-flash",
-            "gemini-3.8-flash",
         }:
-            return "gemini-3.6-flash"
+            return "gemini-3.8-flash"
         return value
 
     @property
@@ -47,7 +46,9 @@ class AgentRuntimeSettings(BaseSettings):
 
     @property
     def has_model_api_key(self) -> bool:
-        return self.gemini_api_key is not None or self.openrouter_api_key is not None
+        if self.agent_model_provider == "google":
+            return self.gemini_api_key is not None
+        return self.openrouter_api_key is not None or self.gemini_api_key is not None
 
     @property
     def required_api_key_name(self) -> str:

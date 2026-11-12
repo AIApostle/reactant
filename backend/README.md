@@ -48,21 +48,22 @@ Additional configuration:
   `SUPABASE_SECRET_KEY` and the selected model provider's API key. Keep
   disabled until these credentials and the Supabase
   migration are configured.
-- `AGENT_MODEL_PROVIDER` — `openrouter` (default) or `google` (native Gemini).
-- `GEMINI_API_KEY` — backend-only Google AI Studio key for Strands' native
-  Gemini provider. `GOOGLE_API_KEY` is also accepted. Never expose the key to
+- `AGENT_MODEL_PROVIDER` — `google` (default, native Gemini) or `openrouter`.
+- `GEMINI_API_KEY` — backend-only Google AI Studio key passed to Strands'
+  `GeminiModel`. `GOOGLE_API_KEY` is also accepted. Never expose the key to
   the frontend.
 - `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` — optional Gemini model IDs;
-  both default to the stable `gemini-3.6-flash` model. Older 2.5 Flash and
-  3.8 Flash values are normalized to 3.6 Flash.
+  both default to the stable `gemini-3.8-flash` model. Older 2.5 Flash values
+  are normalized to 3.8 Flash.
 - `OPENROUTER_API_KEY` — backend-only OpenRouter key, used when
   `AGENT_MODEL_PROVIDER=openrouter`.
 - `OPENROUTER_MODEL_ID` and `OPENROUTER_VISION_MODEL_ID` — optional model IDs
   for the OpenRouter provider.
-- With `AGENT_MODEL_PROVIDER=openrouter`, `GEMINI_API_KEY` enables native
-  Gemini as the only failover provider. Gemini-primary mode does not fall back
-  to OpenRouter. Provider failures are retried before any partial response or
-  tool call is exposed, so a fallback does not repeat agent side effects.
+- With the default `AGENT_MODEL_PROVIDER=google`, the agent uses the Gemini
+  API key and Gemini model IDs directly. It does not fall back to OpenRouter.
+  If `AGENT_MODEL_PROVIDER=openrouter` is explicitly selected, Gemini is the
+  failover provider. Provider failures are retried before any partial response
+  or tool call is exposed, so a fallback does not repeat agent side effects.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
   local testing. Use `https://api-m.paypal.com` only for production.
 - `PAYPAL_WEBHOOK_IDS` — backend-only JSON object mapping each PayPal integration
@@ -78,7 +79,8 @@ Additional configuration:
 - `PAYPAL_PARTNER_ATTRIBUTION_ID` — Reactant's BN attribution code, backend-only.
   Existing local environments may keep using `PAYPAL_BN_CODE`.
 - `PAYPAL_RECEIVING_COUNTRIES` — comma-separated business country allowlist;
-  defaults to `US`.
+  defaults to `US,NG`. Nigeria is accepted only with the PayPal Sandbox API;
+  the backend blocks it when PayPal Live is configured.
 - `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` are backend-only platform app
   credentials. Businesses enter only their PayPal account email, never their
   app credentials. Use the Sandbox app credentials and Sandbox seller/buyer
@@ -127,10 +129,8 @@ project before retrying.
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
-- Strands uses OpenRouter through its OpenAI-compatible provider by default.
-  When `GEMINI_API_KEY` is set, native Gemini is the failover model. Set
-  `AGENT_MODEL_PROVIDER=google` to use Gemini directly without OpenRouter
-  failover.
+- Strands uses Google's native Gemini provider by default. OpenRouter remains
+  available only when `AGENT_MODEL_PROVIDER=openrouter` is explicitly set.
   No MCP server is configured in this project, and the current scoped catalog
   tool does not require one. Do not attach a third-party MCP server without an
   explicit trust and permission review.
@@ -140,6 +140,10 @@ project before retrying.
   after-payment onboarding, customer consent, server-verified capture, signed
   webhooks, refunds, reconciliation, and receipts. Seller onboarding and
   payment capabilities still require PayPal approval and dashboard setup.
+- Strands `Agent` remains the orchestration runtime: it manages the conversation
+  loop and invokes registered tools. `GeminiModel` supplies model inference;
+  catalog lookup, total calculation, and AgentCard transaction creation remain
+  backend tools with server-side validation.
 - AgentCard is disabled until `AGENTCARD_ENABLED=true`, PayPal seller
   onboarding is approved and implemented, the business country is
   allowlisted, and the agent's order/PayPal permissions are enabled. These

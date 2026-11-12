@@ -57,13 +57,10 @@ PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
 PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true
 AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
-AGENT_MODEL_PROVIDER=openrouter
-OPENROUTER_API_KEY=<server-only-openrouter-key>
-OPENROUTER_MODEL_ID=openrouter/free
-# Optional Google alternative:
-# AGENT_MODEL_PROVIDER=google
-# GEMINI_API_KEY=<server-only-google-ai-studio-key>
-# GEMINI_MODEL_ID=gemini-3.6-flash
+AGENT_MODEL_PROVIDER=google
+GEMINI_API_KEY=<server-only-google-ai-studio-key>
+GEMINI_MODEL_ID=gemini-3.8-flash
+GEMINI_VISION_MODEL_ID=gemini-3.8-flash
 ```
 
 Generate `CREDENTIALS_ENCRYPTION_KEY` with:
@@ -91,18 +88,13 @@ doesn't change the PayPal Developer Dashboard setting. For Sandbox, use the
 Sandbox app credentials, BN code, and Sandbox API URL; for production, use the
 Live app credentials, BN code, and Live API URL.
 
-Strands uses OpenRouter by default. Add `OPENROUTER_API_KEY` to the backend
-environment and set `AGENT_MODEL_PROVIDER=openrouter`; choose an available model
-with `OPENROUTER_MODEL_ID` if the `openrouter/free` router is unsuitable. Never
-expose the key to the frontend. Google's native Gemini provider remains
-available by setting `AGENT_MODEL_PROVIDER=google`, `GEMINI_API_KEY`, and
-optionally `GEMINI_MODEL_ID`.
-
-When both provider keys are configured, a provider API failure triggers one
-retry with the other provider. The response is buffered before agent tools run,
-so a failed provider cannot cause the fallback to repeat checkout or another
-tool side effect. With only one provider key, the agent uses that provider but
-cannot fail over.
+Strands `Agent` orchestrates the conversation and tool calls. Its `GeminiModel`
+uses Google's Gemini API for model inference; the agent still invokes the
+backend's catalog, order-validation, and AgentCard tools. Set `GEMINI_API_KEY`
+and use `GEMINI_MODEL_ID` / `GEMINI_VISION_MODEL_ID` for model selection. Never
+expose the key to the frontend. OpenRouter remains an optional compatibility
+provider only when explicitly selected with `AGENT_MODEL_PROVIDER=openrouter`;
+Gemini then serves as its fallback.
 
 ### Vercel frontend environment
 
