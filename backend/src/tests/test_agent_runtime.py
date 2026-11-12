@@ -351,6 +351,33 @@ class AgentRuntimeTests(unittest.TestCase):
             products = agent.tool_registry.registry[
                 "list_available_business_products"
             ]._tool_func(limit=8)
+            calculator_tool = agent.tool_registry.registry[
+                "calculate_customer_order_total"
+            ]
+            item_schema = calculator_tool.tool_spec["inputSchema"]["json"][
+                "properties"
+            ]["items"]["items"]
+            validated_calculator_input = calculator_tool._metadata.validate_input(
+                {
+                    "items": [
+                        {
+                            "product_name": "Grey Vintage Shirt",
+                            "quantity": 2,
+                        }
+                    ]
+                }
+            )
+            with self.assertRaises(ValueError):
+                calculator_tool._metadata.validate_input(
+                    {
+                        "items": [
+                            {"name": "Grey Vintage Shirt", "quantity": 2}
+                        ]
+                    }
+                )
+            checkout_item_schema = agent.tool_registry.registry[
+                "create_agentcard_transaction"
+            ].tool_spec["inputSchema"]["json"]["properties"]["items"]["items"]
             total = agent.tool_registry.registry[
                 "calculate_customer_order_total"
             ]._tool_func(
@@ -372,6 +399,17 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertNotIn("product_id", products[0])
         self.assertNotIn("price_minor", products[0])
         self.assertEqual(products[0]["unit_price"], "USD 5.00")
+        self.assertEqual(
+            item_schema["required"],
+            ["product_name", "quantity"],
+        )
+        self.assertIn("product_name", item_schema["properties"])
+        self.assertIn("quantity", item_schema["properties"])
+        self.assertEqual(item_schema, checkout_item_schema)
+        self.assertEqual(
+            validated_calculator_input["items"][0],
+            {"product_name": "Grey Vintage Shirt", "quantity": 2},
+        )
         self.assertEqual(total["items"][0]["line_total"], "USD 10.00")
         self.assertEqual(total["item_subtotal"], "USD 10.00")
         self.assertEqual(
@@ -764,6 +802,13 @@ class AgentRuntimeTests(unittest.TestCase):
             resolve_customer_checkout_items(
                 [{"product_name": "Shoes", "quantity": 1}],
                 {"shoes": {"product-id-a", "product-id-b"}},
+            )
+
+    def test_customer_checkout_rejects_wrong_item_field_names(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_customer_checkout_items(
+                [{"name": "Brown Vintage Shirt", "quantity": 2}],
+                {"brown vintage shirt": {"d7356ad3-ba69-46fd-91d1-daebf6ab7142"}},
             )
         with self.assertRaises(ValueError):
             resolve_customer_checkout_items(

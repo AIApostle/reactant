@@ -9,7 +9,7 @@ import httpx
 from fastapi import HTTPException
 from google.genai.errors import APIError as GoogleAPIError
 from openai import APIError as OpenAIAPIError
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from storage3.utils import StorageException
 
 from strands import Agent, tool
@@ -44,6 +44,37 @@ MAX_AGENT_TOTAL_TOKENS = 8000
 MAX_PRODUCT_SEARCH_RESULTS = 8
 MAX_WEB_SEARCH_RESULTS = 5
 MAX_PRODUCT_IMAGE_RESULTS = 3
+CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA = {
+    "json": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "product_name": {
+                            "type": "string",
+                            "description": "Exact product name returned by the catalog tool.",
+                        },
+                        "quantity": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "description": "Whole number of units requested.",
+                        },
+                    },
+                    "required": ["product_name", "quantity"],
+                    "additionalProperties": False,
+                },
+                "minItems": 1,
+                "maxItems": 100,
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+}
 logger = logging.getLogger(__name__)
 PROVIDER_FAILURES = (ModelThrottledException, GoogleAPIError, OpenAIAPIError)
 PRODUCT_IMAGE_REQUEST = re.compile(
@@ -66,6 +97,21 @@ LABELED_INTERNAL_ID_PATTERN = re.compile(
     r"(?:id|identifier|reference)\s*[:#]?\s*[a-z0-9_-]{4,}\b",
     re.I,
 )
+
+
+class CustomerOrderItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    product_name: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Exact product name returned by the catalog tool.",
+    )
+    quantity: int = Field(
+        ge=1,
+        le=10000,
+        description="Whole number of units requested.",
+    )
 
 
 class FailoverModel(Model):
@@ -217,20 +263,21 @@ def format_minor_amount(amount_minor: int, currency: str) -> str:
 
 
 def resolve_customer_checkout_items(
-    items: list[dict[str, Any]],
+    items: list[CustomerOrderItem | dict[str, Any]],
     catalog_product_ids: dict[str, set[str]],
 ) -> list[AgentCardItemRequest]:
     resolved: list[AgentCardItemRequest] = []
-    for item in items:
-        product_name = item.get("product_name")
-        if not isinstance(product_name, str) or not product_name.strip():
-            raise ValueError("Choose a product by its catalog name.")
-        matching_ids = catalog_product_ids.get(product_name.strip().casefold(), set())
+    for raw_item in items:
+        item = CustomerOrderItem.model_validate(raw_item)
+        matching_ids = catalog_product_ids.get(item.product_name.strip().casefold(), set())
         if len(matching_ids) != 1:
             raise ValueError("Search for a specific catalog product before preparing checkout.")
         resolved.append(
             AgentCardItemRequest.model_validate(
-                {"product_id": next(iter(matching_ids)), "quantity": item.get("quantity")}
+                {
+                    "product_id": next(iter(matching_ids)),
+                    "quantity": item.quantity,
+                }
             )
         )
     return resolved
@@ -571,33 +618,26 @@ def build_business_agent(
             ]
         return register_customer_catalog_products(products)
 
-    @tool
+    @tool(inputSchema=CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA)
     def calculate_customer_order_total(
-        items: list[dict[str, Any]],
+        items: list[CustomerOrderItem],
     ) -> dict[str, Any]:
-        """Calculate exact item subtotals from products searched or listed in this turn. Use this instead of doing price arithmetic mentally. Checkout remains the final source of truth."""
+        """Calculate exact catalog prices and subtotals. Pass each item with the exact product_name from catalog results and an integer quantity. Example: {"items":[{"product_name":"Brown Vintage Shirt","quantity":2}]}. Do not use name, product, or item as the field name."""
         if not items or len(items) > 100:
             raise ValueError("Provide between 1 and 100 catalog items.")
 
         calculated_items: list[dict[str, Any]] = []
         subtotal_minor = 0
         currency: str | None = None
-        for item in items:
-            product_name = item.get("product_name")
-            if not isinstance(product_name, str) or not product_name.strip():
-                raise ValueError("Choose each product by its catalog name.")
-            matching_ids = catalog_product_ids.get(product_name.strip().casefold(), set())
+        for raw_item in items:
+            item = CustomerOrderItem.model_validate(raw_item)
+            matching_ids = catalog_product_ids.get(
+                item.product_name.strip().casefold(), set()
+            )
             if len(matching_ids) != 1:
                 raise ValueError(
                     "Search for a specific catalog product before calculating its price."
                 )
-            quantity = item.get("quantity")
-            if (
-                isinstance(quantity, bool)
-                or not isinstance(quantity, int)
-                or not 1 <= quantity <= 10000
-            ):
-                raise ValueError("Each item quantity must be between 1 and 10000.")
 
             product = catalog_products[next(iter(matching_ids))]
             product_currency = str(product["currency"]).upper()
@@ -605,12 +645,12 @@ def build_business_agent(
                 raise ValueError("Items in one order must use the same currency.")
             currency = product_currency
             unit_price_minor = int(product["price_minor"])
-            line_total_minor = unit_price_minor * quantity
+            line_total_minor = unit_price_minor * item.quantity
             subtotal_minor += line_total_minor
             calculated_items.append(
                 {
                     "product_name": product["name"],
-                    "quantity": quantity,
+                    "quantity": item.quantity,
                     "unit_price": format_minor_amount(
                         unit_price_minor, product_currency
                     ),
@@ -869,11 +909,11 @@ def build_business_agent(
         if created_checkout_urls is None:
             checkout_tool_reasons.append("checkout_url_collection_missing")
     if audience == "customer" and not checkout_tool_reasons:
-        @tool
+        @tool(inputSchema=CUSTOMER_ORDER_ITEMS_INPUT_SCHEMA)
         def create_agentcard_transaction(
-            items: list[dict[str, Any]],
+            items: list[CustomerOrderItem],
         ) -> dict[str, Any]:
-            """Prepare a secure checkout from exact catalog product names and quantities after the customer explicitly agrees to buy. Search the catalog in this agent turn first. The server validates current prices and stock and calculates the total."""
+            """Prepare secure checkout after the customer confirms the catalog items, quantities, and calculated total. Pass each item with exact product_name and integer quantity. Example: {"items":[{"product_name":"Brown Vintage Shirt","quantity":2}]}. Do not use name, product, or item as the field name."""
             validated_items = resolve_customer_checkout_items(
                 items,
                 catalog_product_ids,
