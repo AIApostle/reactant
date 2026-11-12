@@ -16,8 +16,8 @@ class AgentRuntimeSettings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
-    gemini_model_id: str = "gemini-3.8-flash"
-    gemini_vision_model_id: str = "gemini-3.8-flash"
+    gemini_model_id: str = "gemini-3.6-flash"
+    gemini_vision_model_id: str = "gemini-3.6-flash"
     strands_worker_poll_seconds: float = Field(default=2, ge=0.5, le=60)
 
     @property

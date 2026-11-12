@@ -87,7 +87,7 @@ Live app credentials, BN code, and Live API URL.
 
 Strands `Agent` orchestrates the conversation and tool calls. All inference uses
 Google's Gemini API, including image requests. The default model is
-`gemini-3.8-flash`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override
+`gemini-3.6-flash`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override
 the text and vision models. Configure `GEMINI_API_KEY` only on the backend and
 never expose it to the frontend.
 

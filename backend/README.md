@@ -49,7 +49,7 @@ Additional configuration:
   disabled until these credentials and the Supabase
   migration are configured.
 - `GEMINI_API_KEY` — backend-only Google AI Studio key. Strands uses Gemini for
-  text and vision inference, with `gemini-3.8-flash` as the default model.
+  text and vision inference, with `gemini-3.6-flash` as the default model.
   `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override the model IDs.
   Never expose the key to the frontend.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for

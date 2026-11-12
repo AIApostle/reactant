@@ -812,7 +812,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.6-flash")
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:
@@ -831,7 +831,7 @@ class AgentRuntimeTests(unittest.TestCase):
             vision_enabled=True,
         )
         self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-3.8-flash")
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.6-flash")
 
     def test_agent_requires_gemini_key_without_provider_fallback(self) -> None:
         settings = AgentRuntimeSettings(_env_file=None)
