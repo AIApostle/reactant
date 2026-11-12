@@ -47,9 +47,9 @@ SUPABASE_PERISHABLE_KEY=<server-compatible-publishable-or-anon-key>
 SUPABASE_SECRET_KEY=<server-only-secret-key>
 CREDENTIALS_ENCRYPTION_KEY=<fernet-key>
 APP_ENV=production
-ALLOWED_WEB_ORIGINS=https://reactant-theta.vercel.app
+ALLOWED_WEB_ORIGINS=https://getreactant.vercel.app
 PUBLIC_API_BASE_URL=https://reactant.onrender.com
-PUBLIC_FRONTEND_URL=https://reactant-theta.vercel.app
+PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
 PAYPAL_RECEIVING_COUNTRIES=US,NG
 PAYPAL_CLIENT_ID=<reactant-sandbox-partner-app-client-id>
@@ -103,7 +103,7 @@ VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
 ```
 
 Only the Supabase public key belongs in Vercel. AgentCard checkout pages are
-served at `https://reactant-theta.vercel.app/checkout/<token>`.
+served at `https://getreactant.vercel.app/checkout/<token>`.
 
 ### PayPal seller payments and after-payment onboarding
 

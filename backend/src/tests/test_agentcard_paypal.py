@@ -26,13 +26,13 @@ class PayPalAmountTests(unittest.TestCase):
     def test_checkout_base_url_defaults_to_the_deployed_frontend(self) -> None:
         settings = MagicMock(
             app_env="production",
-            public_frontend_url="https://reactant-theta.vercel.app",
-            frontend_url="https://reactant-theta.vercel.app",
+            public_frontend_url="https://getreactant.vercel.app",
+            frontend_url="https://getreactant.vercel.app",
         )
         with patch("src.agentcard.service.get_supabase_settings", return_value=settings):
             self.assertEqual(
                 _checkout_base_url(),
-                "https://reactant-theta.vercel.app",
+                "https://getreactant.vercel.app",
             )
 
     def test_production_checkout_rejects_localhost_frontend(self) -> None:

@@ -59,7 +59,7 @@ Additional configuration:
   frontend or store it with seller account credentials.
 - `PUBLIC_FRONTEND_URL` — HTTPS frontend origin used for customer checkout and
   for hosting the `reactant-chat.js` website widget installer. Defaults to
-  `https://reactant-theta.vercel.app`; set `http://localhost:5173` for local
+  `https://getreactant.vercel.app`; set `http://localhost:5173` for local
   checkout testing. Production refuses localhost checkout links.
 - `APP_ENV=production` — enables production URL validation for customer
   checkout links.

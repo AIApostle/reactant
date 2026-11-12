@@ -263,6 +263,16 @@ def include_secure_checkout_link(
     if not checkout_urls:
         return response
     checkout_url = checkout_urls[-1]
+    if response.startswith(
+        (
+            "I couldn't complete that reply just now.",
+            "I couldn't finish my reply just now",
+        )
+    ):
+        response = (
+            "Your secure checkout is ready. Please review the items and total "
+            "on the checkout page before paying."
+        )
     if checkout_url in response:
         return response
     return f"{response.rstrip()}\n\nSecure checkout: {checkout_url}"

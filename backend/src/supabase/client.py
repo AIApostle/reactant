@@ -37,7 +37,7 @@ class SupabaseSettings(BaseSettings):
     agentcard_enabled: bool = False
     paypal_onboarding_after_payment_enabled: bool = False
     public_api_base_url: str | None = None
-    public_frontend_url: str = "https://reactant-theta.vercel.app"
+    public_frontend_url: str = "https://getreactant.vercel.app"
     shopify_client_id: str | None = None
     shopify_client_secret: SecretStr | None = None
     shopify_scopes: str = "read_products,read_inventory,read_orders"

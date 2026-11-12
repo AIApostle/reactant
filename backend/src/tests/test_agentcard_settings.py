@@ -15,7 +15,7 @@ class AgentCardSettingsTests(unittest.TestCase):
             supabase_perishable_key=SecretStr("test-key"),
         )
 
-        self.assertEqual(settings.frontend_url, "https://reactant-theta.vercel.app")
+        self.assertEqual(settings.frontend_url, "https://getreactant.vercel.app")
 
     def test_enabled_accepts_lower_and_title_case_booleans_from_environment(self) -> None:
         for value in ("true", "True"):

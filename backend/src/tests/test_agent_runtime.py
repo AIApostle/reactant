@@ -692,7 +692,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
     def test_checkout_link_is_appended_once_after_customer_response(self) -> None:
-        url = "https://reactant-theta.vercel.app/checkout/example"
+        url = "https://getreactant.vercel.app/checkout/example"
 
         self.assertEqual(
             include_secure_checkout_link("Your checkout is ready.", [url]),
@@ -701,6 +701,16 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(
             include_secure_checkout_link(f"Secure checkout: {url}", [url]),
             f"Secure checkout: {url}",
+        )
+        self.assertEqual(
+            include_secure_checkout_link(
+                "I couldn't complete that reply just now. Please try again.",
+                [url],
+            ),
+            (
+                "Your secure checkout is ready. Please review the items and total "
+                f"on the checkout page before paying.\n\nSecure checkout: {url}"
+            ),
         )
 
     def test_customer_prompt_does_not_allow_unsolicited_product_photos(self) -> None:
