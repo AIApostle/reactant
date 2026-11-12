@@ -76,8 +76,8 @@ AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
 STRANDS_AGENT_WORKER_ENABLED=false
 GEMINI_API_KEY=<server-only-google-ai-studio-key>
-GEMINI_MODEL_ID=gemini-2.5-flash-lite
-GEMINI_VISION_MODEL_ID=gemini-2.5-flash-lite
+GEMINI_MODEL_ID=gemini-3.5-flash-lite
+GEMINI_VISION_MODEL_ID=gemini-3.5-flash-lite
 ```
 
 Generate `CREDENTIALS_ENCRYPTION_KEY` with:
@@ -107,11 +107,11 @@ Live app credentials, BN code, and Live API URL.
 
 Strands `Agent` orchestrates the conversation and tool calls. All inference uses
 Google's Gemini API, including image requests. The default model is
-`gemini-2.5-flash-lite`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can
+`gemini-3.5-flash-lite`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can
 override the text and vision models. Google may restrict Flash-Lite access for
-some API keys. If this model is not available to the key, set both model IDs to
-an available Gemini model. Configure `GEMINI_API_KEY` only on the backend and
-never expose it to the frontend.
+some API keys. The runtime retries alternative configured Gemini IDs when the
+current model returns a 404 or model-unavailable response. Configure
+`GEMINI_API_KEY` only on the backend and never expose it to the frontend.
 
 Customer messages from Telegram and website chat are persisted to Supabase and
 processed asynchronously by the agent worker. Website replies are delivered

@@ -17,8 +17,22 @@ class AgentRuntimeSettings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
-    gemini_model_id: str = "gemini-2.5-flash-lite"
-    gemini_vision_model_id: str = "gemini-2.5-flash-lite"
+    gemini_model_id: str = "gemini-3.5-flash-lite"
+    gemini_vision_model_id: str = "gemini-3.5-flash-lite"
+    gemini_model_ids: list[str] = Field(
+        default_factory=lambda: [
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+        ]
+    )
+    gemini_vision_model_ids: list[str] = Field(
+        default_factory=lambda: [
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+        ]
+    )
     strands_worker_poll_seconds: float = Field(default=2, ge=0.5, le=60)
 
     @property
@@ -33,8 +47,34 @@ class AgentRuntimeSettings(BaseSettings):
     def required_api_key_name(self) -> str:
         return "GEMINI_API_KEY"
 
+    def fallback_model_ids(self, *, vision: bool = False) -> list[str]:
+        candidates = (
+            self.gemini_vision_model_ids if vision else self.gemini_model_ids
+        )
+        ordered: list[str] = []
+        for candidate in candidates:
+            model_id = str(candidate).strip()
+            if model_id and model_id not in ordered:
+                ordered.append(model_id)
+        preferred = (
+            self.gemini_vision_model_id if vision else self.gemini_model_id
+        )
+        if preferred and preferred not in ordered:
+            ordered.insert(0, preferred)
+        if not ordered:
+            ordered.append(preferred or ("gemini-3.5-flash-lite" if not vision else "gemini-3.5-flash-lite"))
+        for fallback in (
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+        ):
+            if fallback not in ordered:
+                ordered.append(fallback)
+        return ordered
+
     def selected_model_id(self, *, vision: bool = False) -> str:
-        return self.gemini_vision_model_id if vision else self.gemini_model_id
+        return self.fallback_model_ids(vision=vision)[0]
 
 
 def agent_is_enabled(agent_config: dict[str, object] | None) -> bool:

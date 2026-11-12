@@ -52,7 +52,7 @@ Additional configuration:
   Render API web service when running a separate Background Worker. Set it to
   `true` on the Background Worker service.
 - `GEMINI_API_KEY` — backend-only Google AI Studio key. Strands uses Gemini for
-  text and vision inference, with `gemini-2.5-flash-lite` as the default model.
+  text and vision inference, with `gemini-3.5-flash-lite` as the default model.
   `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override the model IDs.
   Never expose the key to the frontend.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
@@ -131,12 +131,11 @@ project before retrying.
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
-- Strands uses Google's Gemini API for text and vision inference. No alternate
-  provider or fallback is configured. Gemini 2.5 Flash-Lite supports function
-  calling and multimodal input, but Google limits its API access to existing
-  users who have actively used it. If the model is unavailable to the API key,
-  set `GEMINI_MODEL_ID=gemini-3.5-flash-lite` and
-  `GEMINI_VISION_MODEL_ID=gemini-3.5-flash-lite`.
+- Strands uses Google's Gemini API for text and vision inference. The runtime is
+  configured with model fallback candidates, so one unavailable Gemini ID does not
+  hard-stop customer chats. The preferred default is
+  `gemini-3.5-flash-lite`; if that model is unavailable to the API key, the app
+  retries configured alternatives automatically.
   No MCP server is configured in this project, and the current scoped catalog
   tool does not require one. Do not attach a third-party MCP server without an
   explicit trust and permission review.

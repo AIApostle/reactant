@@ -15,7 +15,7 @@ from strands.types.agent import Limits
 from strands.types.exceptions import MaxTokensReachedException
 from supabase import Client
 
-from src.agent.config import AgentRuntimeSettings
+from src.agent.config import AgentRuntimeSettings, get_agent_runtime_settings
 from src.agent.customer_images import CustomerImage
 from src.agent.memory import (
     get_memory_config,
@@ -361,17 +361,62 @@ def find_business_products(
     ]
 
 
+def _is_model_unavailable_error(error: Exception) -> bool:
+    details = [
+        str(error).lower(),
+        *(str(item).lower() for item in getattr(error, "args", ()) if item is not None),
+    ]
+    joined = "\n".join(details)
+    status_code = getattr(error, "code", getattr(error, "status", None))
+    if status_code in {400, 404}:
+        return (
+            "not found" in joined
+            or "no longer available" in joined
+            or "unavailable" in joined
+            or "model" in joined and "not" in joined
+            or "invalid model" in joined
+        )
+    return (
+        "model is no longer available" in joined
+        or "this model" in joined and "no longer available" in joined
+        or "not found" in joined and "model" in joined
+        or "model not found" in joined
+        or "invalid model" in joined
+    )
+
+
+def _model_fallback_ids_for_agent(agent: Agent, *, vision: bool) -> list[str]:
+    settings = get_agent_runtime_settings()
+    current_model_id = str(
+        getattr(getattr(agent, "model", None), "config", {}).get("model_id", "")
+    ).strip()
+    if not current_model_id:
+        return settings.fallback_model_ids(vision=vision)
+    fallback_ids = [
+        candidate
+        for candidate in settings.fallback_model_ids(vision=vision)
+        if str(candidate).strip() and str(candidate).strip() != current_model_id
+    ]
+    if not fallback_ids:
+        fallback_ids = settings.fallback_model_ids(vision=vision)
+    return fallback_ids
+
+
 def _create_gemini_model(
     settings: AgentRuntimeSettings,
     *,
     vision: bool,
+    model_id: str | None = None,
 ) -> GeminiModel | None:
     api_key = settings.gemini_api_key
     if api_key is None:
         return None
+    target_model_id = (model_id or settings.selected_model_id(vision=vision)).strip()
+    if not target_model_id:
+        return None
     return GeminiModel(
         client_args={"api_key": api_key.get_secret_value()},
-        model_id=settings.selected_model_id(vision=vision),
+        model_id=target_model_id,
         params={"max_output_tokens": MAX_AGENT_OUTPUT_TOKENS},
     )
 
@@ -967,6 +1012,49 @@ def invoke_business_agent(
                 "Please try again or contact the store team."
             )
         raise
+    except Exception as error:
+        if audience == "customer" and _is_model_unavailable_error(error):
+            logger.warning(
+                "Model availability failure detected; retrying with a fallback model audience=%s model_id=%s error=%s",
+                audience,
+                getattr(getattr(agent, "model", None), "config", {}).get("model_id", "unknown"),
+                error,
+            )
+            for fallback_model_id in _model_fallback_ids_for_agent(agent, vision=bool(images)):
+                try:
+                    settings = get_agent_runtime_settings()
+                    fallback_model = _create_gemini_model(
+                        settings,
+                        vision=bool(images),
+                        model_id=fallback_model_id,
+                    )
+                    if fallback_model is None:
+                        continue
+                    agent.model = fallback_model
+                    result = agent(
+                        prompt,
+                        limits=Limits(
+                            turns=MAX_AGENT_TURNS,
+                            output_tokens=MAX_AGENT_OUTPUT_TOKENS,
+                            total_tokens=MAX_AGENT_TOTAL_TOKENS,
+                        ),
+                    )
+                    break
+                except Exception as retry_error:
+                    if _is_model_unavailable_error(retry_error):
+                        logger.warning(
+                            "Fallback model %s also unavailable; trying next candidate",
+                            fallback_model_id,
+                        )
+                        continue
+                    raise
+            else:
+                return (
+                    "The AI model is temporarily unavailable right now. "
+                    "Please try again in a moment or contact the store team."
+                )
+        else:
+            raise
     response = str(result).strip()
     if not response:
         logger.warning(

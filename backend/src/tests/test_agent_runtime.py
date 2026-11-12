@@ -198,9 +198,16 @@ class AgentRuntimeTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             settings = AgentRuntimeSettings(_env_file=None)
 
-        self.assertEqual(settings.selected_model_id(), "gemini-2.5-flash-lite")
-        self.assertEqual(settings.selected_model_id(vision=True), "gemini-2.5-flash-lite")
+        self.assertEqual(settings.selected_model_id(), "gemini-3.5-flash-lite")
+        self.assertEqual(settings.selected_model_id(vision=True), "gemini-3.5-flash-lite")
         self.assertTrue(settings.strands_agent_worker_enabled)
+
+    def test_fallback_model_ids_prefer_supported_gemini_variants(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = AgentRuntimeSettings(_env_file=None)
+
+        self.assertIn("gemini-3.5-flash-lite", settings.fallback_model_ids())
+        self.assertIn("gemini-2.5-flash-lite", settings.fallback_model_ids())
 
     def test_gemini_and_google_api_key_environment_names_are_supported(self) -> None:
         for key_name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
@@ -939,7 +946,7 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
         self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-2.5-flash-lite")
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.5-flash-lite")
         self.assertEqual(agent.model.client_args["api_key"], "test-key")
 
     def test_agent_uses_vision_model_for_customer_image_messages(self) -> None:
@@ -958,7 +965,7 @@ class AgentRuntimeTests(unittest.TestCase):
             vision_enabled=True,
         )
         self.assertIsInstance(agent.model, GeminiModel)
-        self.assertEqual(agent.model.config["model_id"], "gemini-2.5-flash-lite")
+        self.assertEqual(agent.model.config["model_id"], "gemini-3.5-flash-lite")
 
     def test_agent_requires_gemini_key_without_provider_fallback(self) -> None:
         settings = AgentRuntimeSettings(_env_file=None)
