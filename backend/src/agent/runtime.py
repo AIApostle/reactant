@@ -1,4 +1,3 @@
-from copy import deepcopy
 import hashlib
 import logging
 import re
@@ -1077,15 +1076,20 @@ def invoke_business_agent(
 
 def _recover_customer_final_response(agent: Agent) -> str:
     try:
+        recovery_context = _customer_recovery_context(agent.messages)
         response_agent = Agent(
             model=agent.model,
-            messages=deepcopy(agent.messages),
             tools=[],
-            system_prompt=agent.system_prompt,
+            system_prompt=(
+                "You write concise customer-facing replies from conversation "
+                "history and completed tool results. You have no tools. Never "
+                "claim an action that completed tool results do not confirm."
+            ),
         )
         return str(
             response_agent(
-                CUSTOMER_FINAL_RESPONSE_PROMPT,
+                f"{CUSTOMER_FINAL_RESPONSE_PROMPT}\n\n"
+                f"Conversation and completed tool results:\n{recovery_context}",
                 limits=Limits(turns=1, output_tokens=600, total_tokens=2000),
             )
         ).strip()
@@ -1097,3 +1101,45 @@ def _recover_customer_final_response(agent: Agent) -> str:
             type(error).__name__,
         )
     return ""
+
+
+def _customer_recovery_context(messages: list[dict[str, Any]]) -> str:
+    """Flatten safe message text and tool results, excluding pending tool calls."""
+    lines: list[str] = []
+
+    def collect_text(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [text for item in value for text in collect_text(item)]
+        if not isinstance(value, dict):
+            return []
+        if isinstance(value.get("text"), str):
+            return [value["text"]]
+        # A toolUse block can be left unfinished when the token limit is hit.
+        # Keep completed tool results, but never replay pending calls to the
+        # response-only recovery agent (which intentionally has no tools).
+        if "toolUse" in value:
+            return []
+        if isinstance(value.get("toolResult"), dict):
+            return collect_text(value["toolResult"].get("content", []))
+        return []
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role", "assistant")
+        text = " ".join(
+            part.strip()
+            for part in collect_text(message.get("content", []))
+            if part.strip()
+        )
+        if text:
+            lines.append(f"{role}: {text}")
+
+    context = "\n".join(lines)
+    return (
+        context[-12000:]
+        if context
+        else "No conversation or completed tool results were available."
+    )
