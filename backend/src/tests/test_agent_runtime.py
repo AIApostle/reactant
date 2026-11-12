@@ -201,13 +201,13 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertEqual(settings.model_api_key.get_secret_value(), "test-google-key")
             self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
 
-    def test_openrouter_is_default_agent_provider(self) -> None:
+    def test_google_is_default_agent_provider(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = AgentRuntimeSettings(_env_file=None)
 
-        self.assertEqual(settings.agent_model_provider, "openrouter")
-        self.assertEqual(settings.required_api_key_name, "OPENROUTER_API_KEY")
-        self.assertEqual(settings.selected_model_id(), "openrouter/free")
+        self.assertEqual(settings.agent_model_provider, "google")
+        self.assertEqual(settings.required_api_key_name, "GEMINI_API_KEY")
+        self.assertEqual(settings.selected_model_id(), "gemini-3.6-flash")
 
     def test_retired_gemini_model_setting_is_upgraded(self) -> None:
         settings = AgentRuntimeSettings(

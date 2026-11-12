@@ -60,7 +60,10 @@ PUBLIC_API_BASE_URL=https://reactant.onrender.com
 PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US
-OPENROUTER_VISION_MODEL_ID=google/gemini-2.5-flash
+STRANDS_AGENT_ENABLED=true
+AGENT_MODEL_PROVIDER=google
+GEMINI_API_KEY=<backend-only-google-ai-studio-key>
+GEMINI_MODEL_ID=gemini-3.6-flash
 ```
 
 The Render service's public API origin is:

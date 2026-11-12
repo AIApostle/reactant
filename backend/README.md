@@ -48,7 +48,7 @@ Additional configuration:
   `SUPABASE_SECRET_KEY` and the selected model provider's API key. Keep
   disabled until these credentials and the Supabase
   migration are configured.
-- `AGENT_MODEL_PROVIDER` — `openrouter` (default) or `google`.
+- `AGENT_MODEL_PROVIDER` — `google` (default, native Gemini) or `openrouter`.
 - `GEMINI_API_KEY` — backend-only Google AI Studio key for Strands' native
   Gemini provider. `GOOGLE_API_KEY` is also accepted. Never expose the key to
   the frontend.
@@ -128,11 +128,11 @@ project before retrying.
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
-- Strands uses OpenRouter through its OpenAI-compatible provider, with the
-  `openrouter/free` model router by default. No MCP server is configured in
-  this project, and the current scoped catalog tool does not require one. Do
-  not attach a third-party MCP server without an explicit trust and permission
-  review.
+- Strands uses Google's native Gemini provider by default. Set
+  `AGENT_MODEL_PROVIDER=openrouter` to use OpenRouter through its
+  OpenAI-compatible provider. No MCP server is configured in this project,
+  and the current scoped catalog tool does not require one. Do not attach a
+  third-party MCP server without an explicit trust and permission review.
 - Customer replies are durably queued, but their provider-delivery worker is
   not implemented. A `202` response means queued, not delivered.
 - The AgentCard checkout engine supports PayPal seller-email checkout with
