@@ -79,8 +79,10 @@ class AgentEnablementTests(unittest.TestCase):
                 side_effect=[
                     [],
                     {"id": "conversation-id"},
+                    [],
                     {"id": "message-id"},
                     {},
+                    [],
                     {"name": "Test Business"},
                     {"enabled": False},
                 ],
@@ -115,8 +117,10 @@ class AgentEnablementTests(unittest.TestCase):
                 side_effect=[
                     [],
                     {"id": "conversation-id"},
+                    [],
                     {"id": "message-id"},
                     {},
+                    [],
                     {"name": "Test Business"},
                     {"enabled": True},
                 ],
@@ -155,14 +159,16 @@ class AgentEnablementTests(unittest.TestCase):
         execute_results = [
             [],
             {"id": conversation_id},
+            [],
             {"id": "customer-message-id"},
             {},
+            [],
             {"name": "Test Business"},
             {"enabled": True},
             [],
-            None,
-            None,
-            None,
+            {},
+            {},
+            {},
         ]
         with (
             patch.object(webhook_routes, "execute", side_effect=execute_results),
@@ -213,6 +219,7 @@ class AgentEnablementTests(unittest.TestCase):
                 widget_routes,
                 "execute",
                 side_effect=[
+                    [],
                     [],
                     {"name": "Test Business"},
                     {"enabled": False},

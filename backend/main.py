@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
 from src.agent.config import get_agent_runtime_settings
+from src.agent.customer_worker import run_customer_agent_worker
 from src.agentcard.routes import router as agentcard_router
 from src.agentcard.receipts import run_agentcard_worker
 from src.agent.routes import router as agent_router
@@ -65,7 +66,7 @@ logging.getLogger("uvicorn.access").addFilter(CheckoutTokenAccessLogFilter())
 async def lifespan(_: FastAPI):
     worker_tasks = []
     runtime_settings = get_agent_runtime_settings()
-    if runtime_settings.strands_agent_enabled:
+    if runtime_settings.strands_agent_enabled and runtime_settings.strands_agent_worker_enabled:
         if runtime_settings.model_api_key is None:
             logger.error(
                 "Strands worker is enabled but %s is not configured.",
@@ -78,6 +79,12 @@ async def lifespan(_: FastAPI):
         else:
             worker_tasks.append(
                 asyncio.create_task(run_agent_worker(), name="strands-agent-worker")
+            )
+            worker_tasks.append(
+                asyncio.create_task(
+                    run_customer_agent_worker(),
+                    name="strands-customer-agent-worker",
+                )
             )
     if get_supabase_settings().supabase_secret_key is not None:
         worker_tasks.append(

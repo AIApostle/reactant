@@ -74,7 +74,10 @@ PAYPAL_PARTNER_ATTRIBUTION_ID=<reactant-bn-code>
 PAYPAL_ONBOARDING_AFTER_PAYMENT_ENABLED=true
 AGENTCARD_ENABLED=false
 STRANDS_AGENT_ENABLED=true
+STRANDS_AGENT_WORKER_ENABLED=false
 GEMINI_API_KEY=<server-only-google-ai-studio-key>
+GEMINI_MODEL_ID=gemini-2.5-flash-lite
+GEMINI_VISION_MODEL_ID=gemini-2.5-flash-lite
 ```
 
 Generate `CREDENTIALS_ENCRYPTION_KEY` with:
@@ -104,9 +107,31 @@ Live app credentials, BN code, and Live API URL.
 
 Strands `Agent` orchestrates the conversation and tool calls. All inference uses
 Google's Gemini API, including image requests. The default model is
-`gemini-3.6-flash`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override
-the text and vision models. Configure `GEMINI_API_KEY` only on the backend and
+`gemini-2.5-flash-lite`; `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can
+override the text and vision models. Google may restrict Flash-Lite access for
+some API keys. If this model is not available to the key, set both model IDs to
+an available Gemini model. Configure `GEMINI_API_KEY` only on the backend and
 never expose it to the frontend.
+
+Customer messages from Telegram and website chat are persisted to Supabase and
+processed asynchronously by the agent worker. Website replies are delivered
+over the widget WebSocket; Telegram replies are sent by the worker. Apply
+`backend/src/supabase/migrations/0012_customer_agent_queue.sql` after the owner
+assistant queue migration.
+
+For process isolation on Render, create a Background Worker from this repository
+with root directory `backend` and start command
+`uv run python -m src.agent_worker`. Configure `STRANDS_AGENT_ENABLED=true`,
+`STRANDS_AGENT_WORKER_ENABLED=true`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`,
+`CREDENTIALS_ENCRYPTION_KEY`, and `GEMINI_API_KEY` on the worker. Set
+`STRANDS_AGENT_WORKER_ENABLED=false` on the API web service so it only accepts
+and queues incoming messages. Keep the same Supabase project, encryption key,
+and model settings on both services where applicable. Copy other required
+backend settings to the worker too, including public API/frontend URLs and
+AgentCard/PayPal settings if customers can start checkout in chat. Queue leases prevent
+multiple worker instances from claiming the same run concurrently; Render may
+still restart the service for deploys or maintenance. Increase the worker
+instance count to process more independent conversations concurrently.
 
 ### Vercel frontend environment
 

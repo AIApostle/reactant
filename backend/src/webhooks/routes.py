@@ -11,7 +11,7 @@ from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import ValidationError
 from supabase import Client
 
@@ -22,6 +22,7 @@ from src.agent.customer_images import (
     MAX_CUSTOMER_IMAGE_BYTES,
     CustomerImage,
     history_with_customer_images,
+    load_customer_images,
     normalize_customer_image,
     store_customer_images,
 )
@@ -567,25 +568,7 @@ def _process_telegram_update(
         update_id=update_id,
     ):
         return
-    try:
-        customer_images = _telegram_message_images(credentials["bot_token"], message)
-    except (RuntimeError, ValueError) as error:
-        logger.warning(
-            "Telegram customer image could not be processed update_id=%s exception_type=%s",
-            update_id,
-            type(error).__name__,
-        )
-        _telegram_send_message(
-            credentials["bot_token"],
-            chat_id,
-            "I couldn't read that image. Please resend it as a JPEG, PNG, or WebP under 5 MB.",
-        )
-        return
-    if customer_images and not text.strip():
-        text = "Please look at the image I sent and help me with it."
-    elif customer_images:
-        text = f"{text}\n[Customer included an image with this message.]"
-    if not chat_id or not isinstance(text, str) or not text.strip():
+    if not chat_id:
         return
     provider_conversation_id = f"telegram:{chat_id}"
     customer_name = " ".join(
@@ -626,46 +609,93 @@ def _process_telegram_update(
             .select("id")
             .single()
         )
-    message_id = str(uuid4())
-    image_attachments = store_customer_images(
-        client,
-        business_id=str(business_id),
-        conversation_id=str(conversation["id"]),
-        images=customer_images,
-    )
-    customer_message = execute(
+    existing_messages = execute(
         client.table("customer_messages")
-        .insert(
-            {
-                "id": message_id,
-                "business_id": str(business_id),
-                "conversation_id": conversation["id"],
-                "sender_type": "customer",
-                "sender_id": str(sender.get("id", "")),
-                "text": text[:10000],
-                "visibility": "customer",
-                "delivery_status": "sent",
-                "attachments": image_attachments,
-                "provider_message_id": update_id,
-                "idempotency_key": f"telegram:{channel_id}:{update_id}",
-                "created_at": now,
-            }
+        .select("id,text,attachments")
+        .eq("business_id", str(business_id))
+        .eq("idempotency_key", f"telegram:{channel_id}:{update_id}")
+        .limit(1)
+    )
+    if existing_messages:
+        customer_message = existing_messages[0]
+        message_id = customer_message["id"]
+        text = customer_message["text"]
+        customer_images = load_customer_images(
+            client,
+            business_id=str(business_id),
+            conversation_id=str(conversation["id"]),
+            attachments=customer_message.get("attachments") or [],
         )
+    else:
+        try:
+            customer_images = _telegram_message_images(
+                credentials["bot_token"],
+                message,
+            )
+        except (RuntimeError, ValueError) as error:
+            logger.warning(
+                "Telegram customer image could not be processed update_id=%s exception_type=%s",
+                update_id,
+                type(error).__name__,
+            )
+            _telegram_send_message(
+                credentials["bot_token"],
+                chat_id,
+                "I couldn't read that image. Please resend it as a JPEG, PNG, or WebP under 5 MB.",
+            )
+            return
+        if customer_images and not text.strip():
+            text = "Please look at the image I sent and help me with it."
+        elif customer_images:
+            text = f"{text}\n[Customer included an image with this message.]"
+        if not isinstance(text, str) or not text.strip():
+            return
+        message_id = str(uuid4())
+        image_attachments = store_customer_images(
+            client,
+            business_id=str(business_id),
+            conversation_id=str(conversation["id"]),
+            images=customer_images,
+        )
+        execute(
+            client.table("customer_messages")
+            .insert(
+                {
+                    "id": message_id,
+                    "business_id": str(business_id),
+                    "conversation_id": conversation["id"],
+                    "sender_type": "customer",
+                    "sender_id": str(sender.get("id", "")),
+                    "text": text[:10000],
+                    "visibility": "customer",
+                    "delivery_status": "sent",
+                    "attachments": image_attachments,
+                    "provider_message_id": update_id,
+                    "idempotency_key": f"telegram:{channel_id}:{update_id}",
+                    "created_at": now,
+                }
+            )
+        )
+        execute(
+            client.table("outbox_events").insert(
+                {
+                    "business_id": str(business_id),
+                    "event_type": "conversation.message_created",
+                    "topic": "conversations",
+                    "data": {"conversation_id": conversation["id"]},
+                    "dedupe_key": f"telegram-message:{channel_id}:{update_id}",
+                }
+            )
+        )
+    existing_agent_messages = execute(
+        client.table("customer_messages")
         .select("id")
-        .single()
+        .eq("business_id", str(business_id))
+        .eq("idempotency_key", f"agent:telegram:{channel_id}:{update_id}")
+        .limit(1)
     )
-    del customer_message
-    execute(
-        client.table("outbox_events").insert(
-            {
-                "business_id": str(business_id),
-                "event_type": "conversation.message_created",
-                "topic": "conversations",
-                "data": {"conversation_id": conversation["id"]},
-                "dedupe_key": f"telegram-message:{channel_id}:{update_id}",
-            }
-        )
-    )
+    if existing_agent_messages:
+        return
     business = execute(
         client.table("businesses")
         .select("name,country,currency,return_policy,delivery_policy")
@@ -919,7 +949,6 @@ async def receive_woocommerce_webhook(
 async def receive_telegram_webhook(
     channel_id: UUID,
     request: Request,
-    background_tasks: BackgroundTasks,
 ) -> ResourceEnvelope[WebhookAck]:
     secret = request.headers.get("x-telegram-bot-api-secret-token")
     if not secret:
@@ -981,15 +1010,30 @@ async def receive_telegram_webhook(
         payload=_redact_telegram_pairing_code(payload),
         topic="conversations",
     )
-    if not duplicate:
-        background_tasks.add_task(
-            _process_telegram_update,
-            client,
-            channel_id=channel_id,
-            business_id=business_id,
-            credentials=credentials,
-            payload=payload,
+    encryption_key = get_supabase_settings().credentials_encryption_key
+    if encryption_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "webhook_verification_unavailable",
+                "message": "Webhook processing is not configured.",
+            },
         )
+    encrypted_payload = Fernet(
+        encryption_key.get_secret_value().encode()
+    ).encrypt(json.dumps(payload).encode()).decode()
+    await asyncio.to_thread(
+        execute,
+        client.rpc(
+            "enqueue_telegram_customer_agent_run",
+            {
+                "target_business_id": str(business_id),
+                "target_channel_id": str(channel_id),
+                "target_provider_event_id": str(update_id),
+                "requested_payload_ciphertext": encrypted_payload,
+            },
+        ),
+    )
     return _ack(request, duplicate)
 
 

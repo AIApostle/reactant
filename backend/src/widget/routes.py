@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from supabase import Client
 
@@ -214,6 +214,15 @@ def _process_widget_message(
 ) -> None:
     business_id = str(claims["business_id"])
     conversation_id = str(claims["conversation_id"])
+    existing_agent_messages = execute(
+        client.table("customer_messages")
+        .select("id")
+        .eq("business_id", business_id)
+        .eq("idempotency_key", f"website-agent:{message_id}")
+        .limit(1)
+    )
+    if existing_agent_messages:
+        return
     history_rows = execute(
         client.table("customer_messages")
         .select("id,sender_type,text,attachments")
@@ -479,7 +488,6 @@ def list_widget_messages(request: Request) -> list[dict[str, Any]]:
 def post_widget_message(
     body: WidgetMessageCreate,
     request: Request,
-    background_tasks: BackgroundTasks,
 ) -> dict[str, str]:
     claims = _request_claims(request)
     client = get_service_supabase_client()
@@ -556,14 +564,6 @@ def post_widget_message(
                 "dedupe_key": f"website:{message_id}",
             }
         )
-    )
-    background_tasks.add_task(
-        _process_widget_message,
-        client,
-        claims=claims,
-        user_text=body.text.strip(),
-        message_id=message_id,
-        images=images,
     )
     return {"status": "accepted", "message_id": message_id}
 

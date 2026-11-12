@@ -43,13 +43,16 @@ Additional configuration:
 - `INVITATION_DELIVERY_URL` and `INVITATION_DELIVERY_TOKEN` — HTTPS invitation
   delivery webhook.
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.
-- `STRANDS_AGENT_ENABLED=true` — opt in to the Strands background worker,
-  owner-assistant runtime, and website chat agent. Requires
-  `SUPABASE_SECRET_KEY` and `GEMINI_API_KEY`. Keep
-  disabled until these credentials and the Supabase
-  migration are configured.
+- `STRANDS_AGENT_ENABLED=true` — opt in to the Strands agent runtime. Requires
+  `SUPABASE_SECRET_KEY`, `CREDENTIALS_ENCRYPTION_KEY`, and `GEMINI_API_KEY`.
+  Apply migrations `0002_strands_agent_queue.sql` and
+  `0012_customer_agent_queue.sql` before enabling.
+- `STRANDS_AGENT_WORKER_ENABLED=true` — run the durable agent queue worker in
+  this process. Defaults to `true` for compatibility. Set it to `false` on the
+  Render API web service when running a separate Background Worker. Set it to
+  `true` on the Background Worker service.
 - `GEMINI_API_KEY` — backend-only Google AI Studio key. Strands uses Gemini for
-  text and vision inference, with `gemini-3.6-flash` as the default model.
+  text and vision inference, with `gemini-2.5-flash-lite` as the default model.
   `GEMINI_MODEL_ID` and `GEMINI_VISION_MODEL_ID` can override the model IDs.
   Never expose the key to the frontend.
 - `PAYPAL_API_BASE_URL` — PayPal API base URL; defaults to the Sandbox host for
@@ -114,20 +117,29 @@ project before retrying.
 
 ## Current integration limits
 
-- Owner-assistant messages are atomically persisted with durable agent runs.
-  When enabled, a lifespan-managed worker claims jobs with database leases and
-  runs Strands outside the request path, so other API requests continue while
-  the model responds. The model receives one read-only tool for the current
+- Owner-assistant messages, Telegram updates, and website customer messages are
+  persisted to durable queues and processed outside the API request path.
+  Database leases prevent multiple workers from claiming the same run.
+  Telegram and widget endpoints acknowledge queued work without waiting for
+  Gemini; widget replies arrive over the existing WebSocket.
+  For process isolation, deploy `src/agent_worker.py` as a separate
+  Render Background Worker with start command `uv run python -m src.agent_worker`.
+  Set `STRANDS_AGENT_ENABLED=true`, `STRANDS_AGENT_WORKER_ENABLED=true`,
+  `SUPABASE_SECRET_KEY`, and `GEMINI_API_KEY` on that service. Set
+  `STRANDS_AGENT_WORKER_ENABLED=false` on the API web service to avoid running a
+  second poller there. The model receives one read-only tool for the current
   business's active, agent-enabled products; it cannot place orders, contact
   customers, or change business data. A `202` response means queued, not
   answered; clients can poll the returned agent run ID for its status.
 - Strands uses Google's Gemini API for text and vision inference. No alternate
-  provider or fallback is configured.
+  provider or fallback is configured. Gemini 2.5 Flash-Lite supports function
+  calling and multimodal input, but Google limits its API access to existing
+  users who have actively used it. If the model is unavailable to the API key,
+  set `GEMINI_MODEL_ID=gemini-3.5-flash-lite` and
+  `GEMINI_VISION_MODEL_ID=gemini-3.5-flash-lite`.
   No MCP server is configured in this project, and the current scoped catalog
   tool does not require one. Do not attach a third-party MCP server without an
   explicit trust and permission review.
-- Customer replies are durably queued, but their provider-delivery worker is
-  not implemented. A `202` response means queued, not delivered.
 - The AgentCard checkout engine supports PayPal seller-email checkout with
   after-payment onboarding, customer consent, server-verified capture, signed
   webhooks, refunds, reconciliation, and receipts. Customers can choose a
