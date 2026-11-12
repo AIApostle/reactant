@@ -685,7 +685,17 @@ def _process_telegram_update(
         )
         return
     settings = get_agent_runtime_settings()
-    if not settings.strands_agent_enabled or not settings.has_model_api_key:
+    if not settings.strands_agent_enabled:
+        logger.warning(
+            "Telegram agent response skipped because STRANDS_AGENT_ENABLED is false business_id=%s",
+            business_id,
+        )
+        return
+    if not settings.has_model_api_key:
+        logger.error(
+            "Telegram agent response skipped because GEMINI_API_KEY is not configured business_id=%s",
+            business_id,
+        )
         return
     history_rows = execute(
         client.table("customer_messages")

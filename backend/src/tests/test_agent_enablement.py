@@ -106,6 +106,49 @@ class AgentEnablementTests(unittest.TestCase):
         build_agent.assert_not_called()
         send_message.assert_not_called()
 
+    def test_telegram_logs_when_gemini_key_is_missing(self) -> None:
+        client = Client()
+        with (
+            patch.object(
+                webhook_routes,
+                "execute",
+                side_effect=[
+                    [],
+                    {"id": "conversation-id"},
+                    {"id": "message-id"},
+                    {},
+                    {"name": "Test Business"},
+                    {"enabled": True},
+                ],
+            ),
+            patch.object(webhook_routes, "_handle_owner_telegram_update", return_value=False),
+            patch.object(webhook_routes, "get_agent_runtime_settings", return_value=SimpleNamespace(
+                strands_agent_enabled=True,
+                has_model_api_key=False,
+            )),
+            patch.object(webhook_routes, "build_business_agent") as build_agent,
+            patch.object(webhook_routes, "_telegram_send_message") as send_message,
+            self.assertLogs(webhook_routes.logger, level="ERROR") as captured,
+        ):
+            webhook_routes._process_telegram_update(
+                client,
+                channel_id=uuid4(),
+                business_id=uuid4(),
+                credentials={"bot_token": "test-token"},
+                payload={
+                    "update_id": 124,
+                    "message": {
+                        "chat": {"id": 456},
+                        "from": {"id": 456, "first_name": "Customer"},
+                        "text": "Hi",
+                    },
+                },
+            )
+
+        self.assertIn("GEMINI_API_KEY is not configured", captured.output[0])
+        build_agent.assert_not_called()
+        send_message.assert_not_called()
+
     def test_website_chat_does_not_reply_when_business_agent_is_disabled(self) -> None:
         with (
             patch.object(
