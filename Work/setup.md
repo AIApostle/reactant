@@ -1,6 +1,6 @@
 # Reactant MVP Setup
 
-This setup follows the product workflow in [`prd.md`](./prd.md):
+This setup follows the product workflow in [`product-requirements.md`](./product-requirements.md):
 
 1. A business creates an internal catalog.
 2. The business connects a Telegram bot.
@@ -20,7 +20,7 @@ seller completes PayPal's onboarding. The seller must have a business PayPal
 account and finish within 30 days or PayPal returns the payment.
 
 For the detailed AgentCard environment checklist, PayPal webhook setup, and
-end-to-end Sandbox procedure, see [`AGENTCARD_SETUP.md`](./AGENTCARD_SETUP.md).
+end-to-end Sandbox procedure, see [`agentcard-setup.md`](./agentcard-setup.md).
 
 ## What is already in the repository
 
@@ -244,7 +244,7 @@ Run the test in this order:
    `CREDENTIALS_ENCRYPTION_KEY`, and the hosted HTTPS URLs in Render.
 4. Connect and test the Telegram bot. Connect the seller's PayPal business
    account and configure the Sandbox webhook as described in
-   `AGENTCARD_SETUP.md`.
+   `agentcard-setup.md`.
 5. Add an active, agent-enabled catalog item with current price and stock.
 6. Enable the Business Agent and its order and PayPal checkout permissions.
 7. Verify that the PayPal integration is connected and Integrations identifies

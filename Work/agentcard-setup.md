@@ -281,6 +281,17 @@ request with the same idempotency key.
   the backend retries reconciliation and captures the existing approved order.
   The receipt and owner-agent payment event are created only after PayPal
   confirms a matching completed capture.
+- **Webhook POST returns `202 Accepted`, but checkout still says processing:**
+  `202` means the webhook event passed the endpoint's verification and was
+  accepted for processing. It does not mean PayPal captured the payment. Check
+  the capture result separately; `PAYEE_NOT_CONSENTED` requires seller consent
+  and onboarding to be completed.
+- **PayPal order lookup returns `404 INVALID_RESOURCE_ID`:** verify the stored
+  order ID belongs to the same Sandbox or Live environment and REST app whose
+  credentials Render is using. PayPal also documents insufficient access to an
+  order as a possible cause. Existing order IDs created under another app or
+  environment cannot be reconciled with the current credentials; keep those
+  attempts pending until their outcome is checked in the matching PayPal app.
 - **PayPal webhooks return `404`:** Confirm the webhook URL contains the active
   Reactant PayPal integration UUID and that the same UUID is a key in
   `PAYPAL_WEBHOOK_IDS`. The mapping value must be that PayPal app's webhook ID.
@@ -303,7 +314,9 @@ request with the same idempotency key.
   REST app.
 - **Payment remains pending or reconciliation:** do not retry payment with a
   new checkout. Check PayPal Sandbox activity and Render logs; the backend
-  worker also reconciles unfinished payment attempts.
+  worker also reconciles unfinished payment attempts. An accepted webhook or
+  an HTTP `200` from the checkout status endpoint does not by itself confirm
+  payment.
 - **No receipt:** confirm `SUPABASE_SECRET_KEY` is set and migration 0003's
   `agentcard-receipts` bucket and receipt functions exist, then inspect Render
   worker logs.

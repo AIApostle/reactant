@@ -9,6 +9,7 @@ SDK. The application entry point is `main.py`; application modules live under
 Use Python 3.11 and `uv`:
 
 ```sh
+cd backend
 uv sync
 cp .env.example .env
 uv run uvicorn main:app --reload
@@ -89,17 +90,17 @@ In development, Swagger UI is available at `/api/v1/docs`.
 ## Supabase schema
 
 Review and run, in order,
-[`src/supabase/migrations/0001_core_schema.sql`](src/supabase/migrations/0001_core_schema.sql)
+[`backend/src/supabase/migrations/0001_core_schema.sql`](../backend/src/supabase/migrations/0001_core_schema.sql)
 and
-[`src/supabase/migrations/0002_strands_agent_queue.sql`](src/supabase/migrations/0002_strands_agent_queue.sql),
+[`backend/src/supabase/migrations/0002_strands_agent_queue.sql`](../backend/src/supabase/migrations/0002_strands_agent_queue.sql),
 then
-[`src/supabase/migrations/0003_agentcard_transactions.sql`](src/supabase/migrations/0003_agentcard_transactions.sql)
+[`backend/src/supabase/migrations/0003_agentcard_transactions.sql`](../backend/src/supabase/migrations/0003_agentcard_transactions.sql)
 and
-[`src/supabase/migrations/0004_chat_widgets_and_memory.sql`](src/supabase/migrations/0004_chat_widgets_and_memory.sql)
+[`backend/src/supabase/migrations/0004_chat_widgets_and_memory.sql`](../backend/src/supabase/migrations/0004_chat_widgets_and_memory.sql)
 and
-[`src/supabase/migrations/0005_customer_chat_images.sql`](src/supabase/migrations/0005_customer_chat_images.sql)
+[`backend/src/supabase/migrations/0005_customer_chat_images.sql`](../backend/src/supabase/migrations/0005_customer_chat_images.sql)
 and
-[`src/supabase/migrations/0006_integration_allowed_origins.sql`](src/supabase/migrations/0006_integration_allowed_origins.sql)
+[`backend/src/supabase/migrations/0006_integration_allowed_origins.sql`](../backend/src/supabase/migrations/0006_integration_allowed_origins.sql)
 manually in the Supabase SQL Editor. The application does not apply migrations
 automatically. Test them against a non-production Supabase project before
 production use.

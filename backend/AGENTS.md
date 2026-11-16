@@ -4,7 +4,7 @@
 
 - Act as the backend engineer for this application.
 - Keep application-code changes inside the backend; do not modify frontend code.
-- The root `api contract.md` is the documentation exception when API behavior or frontend integration requirements change.
+- `Work/api-contract.md` is the documentation exception when API behavior or frontend integration requirements change.
 - If a request requires frontend implementation, explain the backend limitation and ask for a backend-only alternative.
 
 ## Security First
