@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import secrets
 from datetime import datetime, timezone
@@ -26,7 +27,11 @@ from src.schemas.integrations import (
     IntegrationResponse,
     TelegramSetupResponse,
 )
-from src.supabase.client import get_user_supabase_client, get_supabase_settings
+from src.supabase.client import (
+    get_service_supabase_client,
+    get_user_supabase_client,
+    get_supabase_settings,
+)
 from src.supabase.repository import execute, get_business_membership, require_role
 from src.integrations.storefronts import (
     StorefrontError,
@@ -39,6 +44,7 @@ from src.integrations.storefronts import (
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 User = Annotated[AuthenticatedUser, Depends(get_current_user)]
 Database = Annotated[Client, Depends(get_user_supabase_client)]
 VISIBLE_FIELDS = (
@@ -851,9 +857,84 @@ def sync_integration(
         .eq("business_id", str(business_id))
         .eq("id", str(integration_id))
     )
+    try:
+        _enqueue_catalog_sync_owner_update(
+            business_id=business_id,
+            integration_id=integration_id,
+            provider=integration["provider"],
+            product_count=len(products),
+            completed_at=now,
+        )
+    except Exception as error:
+        logger.warning(
+            "Catalog sync owner update could not be queued integration_id=%s exception_type=%s",
+            integration_id,
+            type(error).__name__,
+        )
     return ResourceEnvelope(
         data={"imported": len(products)},
         request_id=request.state.request_id,
+    )
+
+
+def _enqueue_catalog_sync_owner_update(
+    *,
+    business_id: UUID,
+    integration_id: UUID,
+    provider: str,
+    product_count: int,
+    completed_at: str,
+) -> None:
+    service_client = get_service_supabase_client()
+    thread = execute(
+        service_client.table("owner_threads")
+        .upsert({"business_id": str(business_id)}, on_conflict="business_id")
+        .select("id")
+        .single()
+    )
+    event_key = f"catalog-sync:{integration_id}:{completed_at}"
+    message = execute(
+        service_client.table("owner_messages")
+        .upsert(
+            {
+                "business_id": str(business_id),
+                "thread_id": thread["id"],
+                "sender_type": "user",
+                "sender_id": "catalog-sync",
+                "display_name": "Catalog sync",
+                "kind": "status_update",
+                "text": (
+                    f"The {provider} product sync finished successfully. "
+                    f"{product_count} products were synchronized. Summarize the result for the owner."
+                ),
+                "idempotency_key": event_key,
+            },
+            on_conflict="business_id,idempotency_key",
+        )
+        .select("id")
+        .single()
+    )
+    execute(
+        service_client.table("agent_runs").upsert(
+            {
+                "business_id": str(business_id),
+                "status": "queued",
+                "input_message_id": message["id"],
+            },
+            on_conflict="business_id,input_message_id",
+        )
+    )
+    execute(
+        service_client.table("outbox_events").upsert(
+            {
+                "business_id": str(business_id),
+                "event_type": "owner_assistant.message_created",
+                "topic": "owner_assistant",
+                "data": {"message_id": message["id"], "thread_id": thread["id"]},
+                "dedupe_key": f"owner-message:{message['id']}",
+            },
+            on_conflict="business_id,dedupe_key",
+        )
     )
 
 
