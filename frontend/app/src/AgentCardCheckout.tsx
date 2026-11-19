@@ -155,9 +155,12 @@ export default function AgentCardCheckout() {
     if (!checkoutStatus || !['payment_processing', 'payment_pending', 'reconciliation'].includes(checkoutStatus.status)) {
       return
     }
+    // Payment status is also updated by PayPal webhooks. Poll at a modest
+    // interval while PayPal is resolving a payment instead of hitting the API
+    // every few seconds for the full duration of seller onboarding.
     const timer = window.setInterval(() => {
       void loadStatus().catch(() => undefined)
-    }, 3000)
+    }, 10000)
     return () => window.clearInterval(timer)
   }, [checkoutStatus, loadStatus])
 

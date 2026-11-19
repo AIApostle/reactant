@@ -2314,7 +2314,7 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       setIntegrations((items) => [connected, ...items.filter((item) => item.id !== connected.id)])
       setPaypalSellerEmail('')
       setDialogProvider(null)
-      notify('PayPal connection verified. Seller onboarding starts after the first payment.')
+      notify('PayPal seller email saved and connection verified.')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The business PayPal account could not be connected.')
     } finally {
@@ -2572,11 +2572,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                   value={paypalSellerEmail}
                   onChange={(event) => setPaypalSellerEmail(event.target.value)}
                   placeholder="seller@example.com"
-                  aria-describedby="paypal-seller-email-note"
                 />
-                <p className="form-note" id="paypal-seller-email-note">
-                  For Sandbox testing, enter the seller email from your PayPal Developer Dashboard. Seller onboarding starts after the first payment.
-                </p>
               </>
             ) : dialogProvider === 'Website chat' ? (
               <>

@@ -79,12 +79,6 @@ their own environment variables; local `.env` files do not deploy. PayPal
 Sandbox setup requires the partner app credentials, seller onboarding, webhook
 registration, and matching webhook ID mapping.
 
-The current backend endpoint is `https://reactant-x0kv.onrender.com`. The
-previous endpoint, `https://reactant.onrender.com`, is retained here for
-rollback reference. Set `PUBLIC_API_BASE_URL` on the new Render service to the
-current endpoint so newly configured integrations receive callback URLs on
-the active service.
-
 See the detailed guides:
 
 - [Local and hosted setup](Work/setup.md)
