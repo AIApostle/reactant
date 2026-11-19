@@ -72,7 +72,6 @@ import {
   type Integration,
   type Notification,
   type OwnerMessage,
-  type TelegramSetup,
   type WebsiteChatInstall,
 } from './api'
 import { getSupabaseClient, isSupabaseConfigured } from './supabase'
@@ -2255,8 +2254,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [integrationToDisconnect, setIntegrationToDisconnect] = useState<Integration | null>(null)
-  const [telegramSetup, setTelegramSetup] = useState<TelegramSetup | null>(null)
-  const [telegramSetupFor, setTelegramSetupFor] = useState<string | null>(null)
   const [paypalSellerEmail, setPaypalSellerEmail] = useState('')
   const [websiteInstall, setWebsiteInstall] = useState<WebsiteChatInstall | null>(null)
   const providers: { provider: Connection; key: Integration['provider']; description: string; icon: Icon; category: string }[] = [
@@ -2401,16 +2398,8 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
     try {
       await apiRequest(businessPath(businessId, `/integrations/${integration.id}/test`), { method: 'POST' })
       await refreshIntegration(integration.id)
-      if (integration.provider === 'telegram') {
-        const setup = await apiRequest<TelegramSetup>(
-          businessPath(businessId, `/integrations/${integration.id}/telegram-setup`),
-        )
-        setTelegramSetup(setup)
-        setTelegramSetupFor(integration.id)
-        notify(`Telegram connected to @${setup.bot_username}.`)
-        return
-      }
-      notify(`${integration.provider} connection test completed.`)
+      if (integration.provider === 'telegram') notify('Telegram connected successfully.')
+      else notify(`${integration.provider} connection test completed.`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The connection test failed.')
     } finally {
@@ -2441,10 +2430,6 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
       await apiRequest(businessPath(businessId, `/integrations/${integration.id}`), { method: 'DELETE' })
       setIntegrations((items) => items.filter((item) => item.id !== integration.id))
       setIntegrationToDisconnect(null)
-      if (telegramSetupFor === integration.id) {
-        setTelegramSetup(null)
-        setTelegramSetupFor(null)
-      }
       if (integration.provider === 'website_chat' && websiteInstall) setWebsiteInstall(null)
       notify(`${integration.provider} was disconnected.`)
     } catch (reason) {
@@ -2464,27 +2449,16 @@ function Integrations({ businessId, integrations, setIntegrations, notify }: {
           const providerConnections = integrations.filter((item) => item.provider === provider.key && item.status !== 'disconnected')
           const connection = providerConnections.find(integrationIsConnected) ?? providerConnections[0]
           const connected = connection ? integrationIsConnected(connection) : false
-          const paypalStatusLabel = connection?.sync_status === 'seller_onboarding_pending'
-            ? 'Seller onboarding pending'
-            : connection?.sync_status === 'seller_connected'
-              ? 'Seller connected'
-              : connection?.sync_status === 'seller_reauthorization_required'
-                ? 'Seller access revoked'
-                : connection?.sync_status === 'ready'
-                  ? 'Legacy Sandbox connection'
-                  : null
+          const paypalStatusLabel = connection?.sync_status === 'seller_reauthorization_required'
+            ? 'Seller access revoked'
+            : connected
+              ? 'Connected'
+              : null
           return (
             <article className={`panel integration-card ${connected ? 'integration-connected' : ''}`} key={provider.key}>
               <div className="integration-card-top"><span className={`integration-icon integration-icon-${provider.provider.toLowerCase()}`}><IconComponent size={22} /></span><Badge color="gray" variant="soft">{provider.category}</Badge></div>
               <h2>{provider.provider}</h2>
               <p>{provider.description}</p>
-              {provider.key === 'telegram' && telegramSetup && connection?.id === telegramSetupFor && (
-                <div className="integration-setup-details">
-                  <strong>Telegram webhook ready</strong>
-                  <small>Bot: @{telegramSetup.bot_username || telegramSetup.bot_name}</small>
-                  <small>{telegramSetup.webhook_url}</small>
-                </div>
-              )}
               {provider.key === 'website_chat' && connection && websiteInstall?.business_id === businessId && (
                 <div className="integration-setup-details">
                   <strong>Install on your website</strong>
@@ -2539,7 +2513,7 @@ Subprotocol: reactant-widget.<session_token>`}</code></pre>
                       </div>
                       <div className="integration-card-actions-buttons">
                         {provider.key === 'telegram' && !connected && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Verify connection</Button>}
-                        {provider.key !== 'telegram' && provider.key !== 'shopify' && provider.key !== 'website_chat' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
+                        {provider.key !== 'telegram' && provider.key !== 'shopify' && provider.key !== 'website_chat' && !connected && <Button variant="soft" color="gray" disabled={saving} onClick={() => void testConnection(connection)}>Test</Button>}
                         {provider.key === 'woocommerce' && <Button variant="soft" color="gray" disabled={saving} onClick={() => void syncConnection(connection)}>Sync now</Button>}
                         {provider.key !== 'website_chat' && <Button variant="soft" color="red" disabled={saving} onClick={() => setIntegrationToDisconnect(connection)}>Disconnect</Button>}
                       </div>
