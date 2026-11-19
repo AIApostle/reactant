@@ -29,6 +29,7 @@ from src.agent.runtime import (
     include_secure_checkout_link,
     find_business_products,
     invoke_business_agent,
+    record_customer_checkout_handoff,
     product_image_attachments,
     product_image_query,
     product_image_reply,
@@ -265,6 +266,8 @@ def _process_widget_message(
         return
     selected_product_images: list[dict[str, Any]] = []
     created_checkout_urls: list[str] = []
+    checkout_errors: list[str] = []
+    handoff_requests: list[dict[str, Any]] = []
     agent = build_business_agent(
         client=client,
         business_id=business_id,
@@ -285,6 +288,8 @@ def _process_widget_message(
         customer_reference=str(claims["visitor_id"]),
         idempotency_key=f"website:{message_id}",
         created_checkout_urls=created_checkout_urls,
+        checkout_errors=checkout_errors,
+        handoff_requests=handoff_requests,
         selected_product_images=selected_product_images,
         vision_enabled=bool(images),
     )
@@ -294,6 +299,37 @@ def _process_widget_message(
         audience="customer",
         images=images,
     )
+    if not created_checkout_urls and checkout_errors:
+        try:
+            handoff = record_customer_checkout_handoff(
+                client,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                customer_name="Website visitor",
+                idempotency_key=f"website:{message_id}",
+                summary=(
+                    f"Customer requested checkout, but it could not be prepared. "
+                    f"Reason: {checkout_errors[-1]}. Customer message: {user_text[:1200]}"
+                ),
+            )
+            handoff_requests.append(handoff)
+        except Exception as error:
+            logger.error(
+                "Website checkout handoff could not be recorded business_id=%s conversation_id=%s exception_type=%s",
+                business_id,
+                conversation_id,
+                type(error).__name__,
+            )
+    if handoff_requests and handoff_requests[-1].get("status") == "pending":
+        response_text = (
+            "I couldn't prepare checkout automatically, so I've sent your purchase "
+            "request to the store team for follow-up."
+        )
+    elif not created_checkout_urls and checkout_errors:
+        response_text = (
+            "I couldn't prepare checkout or send your request to the store team just now. "
+            "Please contact the store directly for help with your purchase."
+        )
     explicitly_requested = bool(IMAGE_REQUEST.search(user_text))
     image_products = selected_product_images
     if explicitly_requested:

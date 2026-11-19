@@ -458,6 +458,69 @@ def search_web(query: str, limit: int = MAX_WEB_SEARCH_RESULTS) -> list[dict[str
     return results
 
 
+def record_customer_checkout_handoff(
+    client: Client,
+    *,
+    business_id: str,
+    conversation_id: str,
+    customer_name: str,
+    idempotency_key: str,
+    summary: str,
+) -> dict[str, Any]:
+    normalized_summary = summary.strip()[:2000]
+    if not normalized_summary:
+        raise ValueError("Provide a handoff summary of 1 to 2000 characters.")
+    request_key = "customer-handoff:" + hashlib.sha256(idempotency_key.encode()).hexdigest()
+    existing = execute(
+        client.table("approvals")
+        .select("id,status,action_type,impact")
+        .eq("business_id", business_id)
+        .eq("request_idempotency_key", request_key)
+        .maybe_single()
+    )
+    if existing is None:
+        approval = execute(
+            client.table("approvals")
+            .insert(
+                {
+                    "business_id": business_id,
+                    "action_type": "customer_checkout_handoff",
+                    "status": "pending",
+                    "impact": {
+                        "summary": normalized_summary,
+                        "customer_name": customer_name[:160],
+                        "conversation_id": conversation_id,
+                    },
+                    "expires_at": None,
+                    "requested_by": "customer_agent",
+                    "request_idempotency_key": request_key,
+                }
+            )
+            .select("id,status,action_type,impact")
+            .single()
+        )
+        if not isinstance(approval, dict):
+            raise RuntimeError("The customer handoff request could not be created.")
+        execute(
+            client.table("outbox_events").insert(
+                {
+                    "business_id": business_id,
+                    "event_type": "approval.created",
+                    "topic": "approvals",
+                    "data": {"approval_id": approval["id"]},
+                    "dedupe_key": f"approval-created:{approval['id']}",
+                }
+            )
+        )
+    else:
+        approval = existing
+    return {
+        "approval_id": approval["id"],
+        "status": approval["status"],
+        "message": "The customer's request is recorded for team follow-up.",
+    }
+
+
 def build_business_agent(
     client: Client,
     business_id: str,
@@ -475,6 +538,7 @@ def build_business_agent(
     agent_run_id: str | None = None,
     created_checkout_urls: list[str] | None = None,
     checkout_errors: list[str] | None = None,
+    handoff_requests: list[dict[str, Any]] | None = None,
     selected_product_images: list[dict[str, Any]] | None = None,
     vision_enabled: bool = False,
 ) -> Agent:
@@ -725,64 +789,18 @@ def build_business_agent(
     ):
         @tool
         def request_customer_handoff(summary: str) -> dict[str, Any]:
-            """Record a customer's explicit request for a team member to follow up when checkout needs human help. Only call this after the customer asks to buy or requests a person."""
-            normalized_summary = summary.strip()
-            if not normalized_summary or len(normalized_summary) > 2000:
-                raise ValueError("Provide a handoff summary of 1 to 2000 characters.")
-
-            request_key = (
-                "customer-handoff:"
-                + hashlib.sha256(idempotency_key.encode()).hexdigest()
+            """Create a team follow-up request when a customer asks to buy but checkout cannot be completed. Call this instead of merely offering to contact the team."""
+            result = record_customer_checkout_handoff(
+                client,
+                business_id=business_id,
+                conversation_id=conversation_id,
+                customer_name=customer_name,
+                idempotency_key=idempotency_key,
+                summary=summary,
             )
-            existing = execute(
-                client.table("approvals")
-                .select("id,status,action_type,impact")
-                .eq("business_id", business_id)
-                .eq("request_idempotency_key", request_key)
-                .maybe_single()
-            )
-            if existing is None:
-                approval = execute(
-                    client.table("approvals")
-                    .insert(
-                        {
-                            "business_id": business_id,
-                            "action_type": "customer_checkout_handoff",
-                            "status": "pending",
-                            "impact": {
-                                "summary": normalized_summary,
-                                "customer_name": customer_name[:160],
-                                "conversation_id": conversation_id,
-                            },
-                            "expires_at": None,
-                            "requested_by": "customer_agent",
-                            "request_idempotency_key": request_key,
-                        }
-                    )
-                    .select("id,status,action_type,impact")
-                    .single()
-                )
-                if not isinstance(approval, dict):
-                    raise RuntimeError("The customer handoff request could not be created.")
-                execute(
-                    client.table("outbox_events").insert(
-                        {
-                            "business_id": business_id,
-                            "event_type": "approval.created",
-                            "topic": "approvals",
-                            "data": {"approval_id": approval["id"]},
-                            "dedupe_key": f"approval-created:{approval['id']}",
-                        }
-                    )
-                )
-            else:
-                approval = existing
-
-            return {
-                "approval_id": approval["id"],
-                "status": approval["status"],
-                "message": "The customer's request is recorded for team follow-up.",
-            }
+            if handoff_requests is not None:
+                handoff_requests.append(result)
+            return result
 
         tools.append(request_customer_handoff)
     if audience == "owner" and agent_run_id is not None:
@@ -963,12 +981,14 @@ def build_business_agent(
     if audience == "customer" and checkout_tool_reasons:
         system_prompt += """
 
-Checkout is not available in this conversation. Do not claim that a checkout
-was created, that a team approval is required, or that a handoff was recorded
-unless a tool result confirms it. Explain briefly that you cannot prepare a
-secure checkout right now. Offer a team handoff only if one has not already been
-recorded in the conversation. Do not repeatedly ask the customer to confirm the
-same purchase.
+Checkout is unavailable in this conversation. If the customer explicitly asks
+to buy, pay, or place an order, you MUST call request_customer_handoff with the
+item, quantity, stated payment preference, and the fact that checkout is
+unavailable. Do not merely offer to contact the team or ask whether they want
+help. Confirm the request was sent only after that tool returns a pending
+status. Do not say checkout or payment was created. If the customer is only
+asking a question and has not expressed purchase intent, do not create a
+handoff. Do not repeatedly ask them to confirm the same purchase.
 """
     return Agent(
         model=model,

@@ -93,6 +93,8 @@ function initialsFor(name?: string | null) {
 export default function WorkspaceSettings({
   businessId,
   business,
+  accountEmail,
+  accountUserId,
   integrations,
   notify,
   onBusinessUpdated,
@@ -100,6 +102,8 @@ export default function WorkspaceSettings({
 }: {
   businessId: string
   business: Business
+  accountEmail: string
+  accountUserId: string
   integrations: Integration[]
   notify: (message: string) => void
   onBusinessUpdated: (business: SettingsApi['business']) => void
@@ -125,6 +129,7 @@ export default function WorkspaceSettings({
   const [team, setTeam] = useState<TeamMember[]>([])
   const [teamLoading, setTeamLoading] = useState(true)
   const [teamError, setTeamError] = useState('')
+  const [updatingMemberId, setUpdatingMemberId] = useState('')
   const [privacy, setPrivacy] = useState<SettingsApi['privacy']>({})
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<'admin' | 'staff' | 'read_only'>('staff')
@@ -159,7 +164,7 @@ export default function WorkspaceSettings({
           return {
             id: member.id,
             name: displayName,
-            email: member.email?.trim() || 'Email unavailable',
+            email: member.email?.trim() || (member.user_id === accountUserId ? accountEmail : '') || 'Email unavailable',
             role: member.role,
             initials: initialsFor(displayName),
           }
@@ -169,7 +174,7 @@ export default function WorkspaceSettings({
       }).finally(() => { if (active) setTeamLoading(false) }),
     ])
     return () => { active = false }
-  }, [businessId, onBusinessUpdated])
+  }, [businessId, onBusinessUpdated, accountEmail, accountUserId])
 
   function updateField(field: keyof BusinessSettings, value: string) {
     setSettings((current) => ({ ...current, [field]: value }))
@@ -237,6 +242,24 @@ export default function WorkspaceSettings({
       notify(`${member.name} was removed from the workspace`)
     } catch (error) {
       setTeamError(error instanceof Error ? error.message : 'The workspace member could not be removed.')
+    }
+  }
+
+  async function updateMemberRole(member: TeamMember, role: TeamMember['role']) {
+    if (business.role !== 'owner' || member.role === 'owner' || updatingMemberId) return
+    setUpdatingMemberId(member.id)
+    setTeamError('')
+    try {
+      const updated = await apiRequest<MemberApi>(businessPath(businessId, `/members/${encodeURIComponent(member.id)}`), {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      })
+      setTeam((members) => members.map((item) => item.id === member.id ? { ...item, role: updated.role } : item))
+      notify(`${member.name} is now ${roleLabel(role)}.`)
+    } catch (error) {
+      setTeamError(error instanceof Error ? error.message : 'The member role could not be updated.')
+    } finally {
+      setUpdatingMemberId('')
     }
   }
 
@@ -356,10 +379,14 @@ export default function WorkspaceSettings({
                 </form>
                 <div className="team-list">
                   {team.map((member) => (
-                    <div className="team-row" key={member.email}>
+                    <div className="team-row" key={member.id}>
                       <span className="team-avatar">{member.initials}</span>
                       <span className="team-person"><strong>{member.name}</strong><small>{member.email}</small></span>
-                      <Badge color={member.role === 'owner' ? 'green' : 'gray'} variant="soft">{roleLabel(member.role)}</Badge>
+                      {business.role === 'owner' && member.role !== 'owner' ? (
+                        <select className="team-role-select" aria-label={`Role for ${member.name}`} value={member.role} disabled={Boolean(updatingMemberId)} onChange={(event) => { void updateMemberRole(member, event.target.value as TeamMember['role']) }}>
+                          <option value="admin">Admin</option><option value="staff">Staff</option><option value="read_only">Read only</option>
+                        </select>
+                      ) : <Badge color={member.role === 'owner' ? 'green' : 'gray'} variant="soft">{roleLabel(member.role)}</Badge>}
                       {business.role === 'owner' && member.role !== 'owner' && <button className="team-remove" type="button" aria-label={`Remove ${member.name}`} onClick={() => { void removeMember(member) }}><Trash size={16} /></button>}
                     </div>
                   ))}

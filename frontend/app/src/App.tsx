@@ -13,7 +13,6 @@ import {
   ChatCircleDots,
   Clock,
   CreditCard,
-  Code,
   DotsThree,
   Eye,
   EyeSlash,
@@ -99,7 +98,7 @@ const reactantGridTheme = themeQuartz.withParams({
   spacing: 8,
 })
 
-type Page = 'overview' | 'inbox' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings' | 'owner-center'
+type Page = 'overview' | 'inbox' | 'notifications' | 'catalog' | 'orders' | 'approvals' | 'integrations' | 'agent' | 'owner-assistant' | 'settings' | 'owner-center'
 type Connection = 'WooCommerce' | 'Shopify' | 'Telegram' | 'PayPal' | 'Website chat'
 type ConversationStatus = 'Needs reply' | 'Open' | 'Resolved'
 type ConversationFilter = 'All' | ConversationStatus
@@ -115,6 +114,7 @@ type Conversation = {
   status: ConversationStatus
   unread: boolean
   messages: ConversationMessage[]
+  messagesLoaded: boolean
 }
 
 type ConversationMessageAttachment = { type: 'image'; url: string; alt: string; source_index?: number }
@@ -283,6 +283,7 @@ function mapConversation(item: ConversationApi): Conversation {
     status,
     unread: item.unread ?? false,
     messages: [],
+    messagesLoaded: false,
   }
 }
 
@@ -295,6 +296,10 @@ function mapConversationMessage(message: CustomerMessageApi): ConversationMessag
     deliveryStatus: message.delivery_status,
     attachments: message.attachments ?? [],
   }
+}
+
+function mapConversationMessages(messages: CustomerMessageApi[]): ConversationMessage[] {
+  return [...messages].reverse().map(mapConversationMessage)
 }
 
 function mapOrder(item: OrderApi): Order {
@@ -326,6 +331,7 @@ function formatCurrency(amount: number, currency = 'USD') {
 const navigation: { label: string; page: Page; icon: Icon }[] = [
   { label: 'Overview', page: 'overview', icon: House },
   { label: 'Inbox', page: 'inbox', icon: ChatCircleDots },
+  { label: 'Notifications', page: 'notifications', icon: Bell },
   { label: 'Catalog', page: 'catalog', icon: Package },
   { label: 'Orders', page: 'orders', icon: ShoppingBagOpen },
   { label: 'Approvals', page: 'approvals', icon: ShieldCheck },
@@ -338,6 +344,7 @@ const navigation: { label: string; page: Page; icon: Icon }[] = [
 const pageTitles: Record<Page, string> = {
   overview: 'Overview',
   inbox: 'Inbox',
+  notifications: 'Notifications',
   catalog: 'Catalog',
   orders: 'Orders',
   approvals: 'Approvals',
@@ -353,6 +360,7 @@ function App() {
   const [page, setPage] = useState<Page>('overview')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState('')
+  const [messagesLoadingConversation, setMessagesLoadingConversation] = useState('')
   const selectedConversationRef = useRef('')
   const [orders, setOrders] = useState<Order[]>([])
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([])
@@ -362,7 +370,6 @@ function App() {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [notificationsBusinessId, setNotificationsBusinessId] = useState('')
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
   const [integrations, setIntegrations] = useState<Integration[]>([])
@@ -375,6 +382,7 @@ function App() {
   const [workspaceError, setWorkspaceError] = useState('')
   const [userName, setUserName] = useState('Workspace member')
   const [userEmail, setUserEmail] = useState('')
+  const [userId, setUserId] = useState('')
   const [workspaceName, setWorkspaceName] = useState('')
   const [workspaceCreating, setWorkspaceCreating] = useState(false)
   const [resourceErrors, setResourceErrors] = useState<string[]>([])
@@ -398,11 +406,7 @@ function App() {
   const pendingApprovals = approvals.filter((item) => item.status === 'pending').length
   const notificationBusinessId = business?.id
   const businessNotifications = business && notificationsBusinessId === business.id ? notifications : []
-  const notificationsLoading = Boolean(
-    notificationBusinessId &&
-    notificationsBusinessId !== notificationBusinessId &&
-    !notificationsError,
-  )
+  const notificationsLoading = Boolean(notificationBusinessId && notificationsBusinessId !== notificationBusinessId && !notificationsError)
   const unreadNotifications = businessNotifications.filter((item) => !item.read_at).length
   const connections: Record<Connection, boolean> = {
     WooCommerce: integrations.some((item) => item.provider === 'woocommerce' && item.status === 'connected'),
@@ -432,6 +436,7 @@ function App() {
           ? metadataName.trim()
           : session.user.email ?? 'Workspace member')
         setUserEmail(session.user.email ?? '')
+        setUserId(session.user.id)
         setSessionReady(true)
         const response = await apiRequest<Business[]>('/businesses')
         if (!active) return
@@ -600,7 +605,7 @@ function App() {
             }
             if (!message.type?.startsWith('conversation.')) return
             const conversationId = message.data?.conversation_id
-            if (conversationId && conversationId === selectedConversationRef.current) {
+            if (message.type === 'conversation.message_created' && conversationId && conversationId === selectedConversationRef.current) {
               void apiRequest<CustomerMessageApi[]>(
                 businessPath(businessId, `/conversations/${conversationId}/messages?limit=100`),
                 { cache: 'no-store' },
@@ -609,7 +614,8 @@ function App() {
                 setConversations((items) => items.map((item) => item.id === conversationId
                   ? {
                       ...item,
-                      messages: messages.map(mapConversationMessage),
+                      messages: mapConversationMessages(messages),
+                      messagesLoaded: true,
                     }
                   : item))
               }).catch(() => undefined)
@@ -621,7 +627,7 @@ function App() {
               if (!active) return
               setConversations((current) => rows.map(mapConversation).map((conversation) => {
                 const existing = current.find((item) => item.id === conversation.id)
-                return existing?.messages.length ? { ...conversation, messages: existing.messages } : conversation
+                return existing?.messagesLoaded ? { ...conversation, messages: existing.messages, messagesLoaded: true } : conversation
               }))
             }).catch(() => undefined)
           } catch {
@@ -703,6 +709,7 @@ function App() {
             time: displayTime(message.created_at),
             status: 'Needs reply',
             messages: [...item.messages, mapConversationMessage(message)],
+            messagesLoaded: true,
           }
         : item))
       // The API has saved the message by the time it returns, including when
@@ -776,26 +783,33 @@ function App() {
 
   async function openConversation(id: string) {
     if (!business) return
+    const hasCachedMessages = conversations.find((item) => item.id === id)?.messagesLoaded ?? false
     setSelectedConversation(id)
+    selectedConversationRef.current = id
     navigate('inbox')
     setSearchOpen(false)
     setSearchTerm('')
+    setReply('')
+    setReplyAttachments([])
+    setConversations((items) => items.map((item) => item.id === id ? { ...item, unread: false } : item))
+    setMessagesLoadingConversation(hasCachedMessages ? '' : id)
+    void apiRequest(businessPath(business.id, `/conversations/${id}/read`), { method: 'POST' }).catch(() => undefined)
     try {
-      const [, messages] = await Promise.all([
-        apiRequest(businessPath(business.id, `/conversations/${id}/read`), { method: 'POST' }),
-        apiRequest<CustomerMessageApi[]>(businessPath(business.id, `/conversations/${id}/messages?limit=100`)),
-      ])
+      const messages = await apiRequest<CustomerMessageApi[]>(
+        businessPath(business.id, `/conversations/${id}/messages?limit=100`),
+        { cache: 'no-store' },
+      )
       setConversations((items) => items.map((item) => item.id === id
         ? {
             ...item,
-            unread: false,
-            messages: messages.map(mapConversationMessage),
+            messages: mapConversationMessages(messages),
+            messagesLoaded: true,
           }
         : item))
-      setReply('')
-      setReplyAttachments([])
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'The conversation could not be loaded.')
+    } finally {
+      if (selectedConversationRef.current === id) setMessagesLoadingConversation('')
     }
   }
 
@@ -921,44 +935,13 @@ function App() {
               <div className="notification-control">
                 <button
                   className="icon-button notification-button"
-                  aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}
-                  aria-expanded={notificationsOpen}
-                  aria-controls="notification-panel"
-                  onClick={() => setNotificationsOpen((open) => !open)}
+                  aria-label={`Open notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}
+                  aria-current={page === 'notifications' ? 'page' : undefined}
+                  onClick={() => navigate('notifications')}
                 >
                   <Bell size={19} />
                   {unreadNotifications > 0 && <span className="notification-mark" />}
                 </button>
-                {notificationsOpen && (
-                  <section className="notification-panel" id="notification-panel" aria-label="Notifications">
-                    <div className="notification-panel-heading">
-                      <strong>Notifications</strong>
-                      <span>{unreadNotifications ? `${unreadNotifications} unread` : 'All caught up'}</span>
-                    </div>
-                    {notificationsError && <p className="notification-error" role="alert">{notificationsError}</p>}
-                    {notificationsLoading && <p className="notification-empty">Loading notifications...</p>}
-                    {!notificationsLoading && businessNotifications.length === 0 && !notificationsError && (
-                      <p className="notification-empty">Payment and workspace updates will appear here.</p>
-                    )}
-                    <div className="notification-list">
-                      {businessNotifications.map((notification) => (
-                        <button
-                          className={`notification-item${notification.read_at ? '' : ' is-unread'}`}
-                          key={notification.id}
-                          onClick={() => {
-                            if (!notification.read_at) void markNotificationRead(notification.id)
-                          }}
-                        >
-                          <span className="notification-item-title">{notification.title}</span>
-                          <span className="notification-item-body">{notification.body}</span>
-                          <time dateTime={notification.created_at}>
-                            {new Date(notification.created_at).toLocaleString()}
-                          </time>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )}
               </div>
               <button className="profile-button" aria-label="Open owner center" onClick={() => navigate('owner-center')}>
                 <span className="profile-avatar">{nameInitials(userName)}</span>
@@ -996,6 +979,7 @@ function App() {
                 conversations={visibleConversations}
                 allConversations={conversations}
                 selectedConversation={currentConversation}
+                messagesLoading={messagesLoadingConversation === currentConversation?.id}
                 products={replyProductsBusinessId === business.id ? replyProducts : []}
                 replyAttachments={replyAttachments}
                 setReplyAttachments={setReplyAttachments}
@@ -1010,6 +994,23 @@ function App() {
                 setReply={setReply}
                 setStatus={setConversationStatus}
               />
+            )}
+            {page === 'notifications' && (
+              <section className="page-body notifications-page">
+                <PageHeading title="Notifications" description="Payment and workspace updates for your business." meta={<span className="notification-page-count">{unreadNotifications ? `${unreadNotifications} unread` : 'All caught up'}</span>} />
+                {notificationsError && <p className="api-error" role="alert">{notificationsError}</p>}
+                {notificationsLoading && <div className="panel notification-page-empty">Loading notifications...</div>}
+                {!notificationsLoading && businessNotifications.length === 0 && !notificationsError && <div className="panel notification-page-empty">You’re all caught up. New updates will appear here.</div>}
+                <div className="notification-list notification-page-list">
+                  {businessNotifications.map((notification) => (
+                    <button className={`notification-item${notification.read_at ? '' : ' is-unread'}`} key={notification.id} onClick={() => { if (!notification.read_at) void markNotificationRead(notification.id) }}>
+                      <span className="notification-item-title">{notification.title}</span>
+                      <span className="notification-item-body">{notification.body}</span>
+                      <time dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString()}</time>
+                    </button>
+                  ))}
+                </div>
+              </section>
             )}
             {page === 'catalog' && (
               <Catalog
@@ -1052,6 +1053,8 @@ function App() {
               <WorkspaceSettings
                 businessId={business.id}
                 business={business}
+                accountEmail={userEmail}
+                accountUserId={userId}
                 integrations={integrations}
                 notify={setToast}
                 onBusinessUpdated={updateBusiness}
@@ -1172,9 +1175,9 @@ function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCou
       </button>
       <nav className="main-navigation" aria-label="Main navigation">
         <p className="nav-section-label">Workspace</p>
-        {navigation.slice(0, 5).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} count={item.page === 'inbox' ? inboxCount : item.page === 'approvals' ? approvalCount : undefined} />)}
+        {navigation.slice(0, 6).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} count={item.page === 'inbox' ? inboxCount : item.page === 'approvals' ? approvalCount : undefined} />)}
         <p className="nav-section-label manage-label">Manage</p>
-        {navigation.slice(5).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} />)}
+        {navigation.slice(6).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} />)}
       </nav>
       <div className="sidebar-bottom">
         <button className={`sidebar-user ${page === 'owner-center' ? 'sidebar-user-active' : ''}`} onClick={openOwnerCenter} aria-label="Open owner center">
@@ -1843,6 +1846,7 @@ function Inbox({
   conversations,
   allConversations,
   selectedConversation,
+  messagesLoading,
   products,
   replyAttachments,
   setReplyAttachments,
@@ -1860,6 +1864,7 @@ function Inbox({
   conversations: Conversation[]
   allConversations: Conversation[]
   selectedConversation?: Conversation
+  messagesLoading: boolean
   products: CatalogProduct[]
   replyAttachments: ReplyAttachment[]
   setReplyAttachments: React.Dispatch<React.SetStateAction<ReplyAttachment[]>>
@@ -1875,6 +1880,11 @@ function Inbox({
   setStatus: (id: string, status: ConversationStatus) => void
 }) {
   const [attachmentPickerOpen, setAttachmentPickerOpen] = useState(false)
+  const messageThreadRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const thread = messageThreadRef.current
+    if (thread) thread.scrollTop = thread.scrollHeight
+  }, [selectedConversation?.id, selectedConversation?.messages.length])
   const filterOptions = [
     { label: 'All', count: allConversations.length },
     { label: 'Needs reply', count: allConversations.filter((conversation) => conversation.status === 'Needs reply').length },
@@ -1946,7 +1956,7 @@ function Inbox({
           <div className="conversation-header">
             <div className="conversation-person">
               <Avatar initials={selectedConversation.initials} color={selectedConversation.color} />
-              <div><strong>{selectedConversation.name}</strong><span><ChatCircleDots size={13} /> {selectedConversation.channel} · {selectedConversation.id}</span></div>
+              <div><strong>{selectedConversation.name}</strong><span><ChatCircleDots size={13} /> {selectedConversation.channel}</span></div>
             </div>
             <div className="conversation-header-actions">
               <Badge color={selectedConversation.status === 'Needs reply' ? 'orange' : selectedConversation.status === 'Resolved' ? 'gray' : 'green'} variant="soft">{selectedConversation.status}</Badge>
@@ -1958,7 +1968,9 @@ function Inbox({
               {selectedConversation.status === 'Resolved' ? 'Reopen' : 'Resolve'}
             </button>
           </div>
-          <div className="message-thread">
+          <div className="message-thread" ref={messageThreadRef}>
+            {messagesLoading && selectedConversation.messages.length === 0 && <p className="message-thread-loading">Loading messages...</p>}
+            {!messagesLoading && selectedConversation.messagesLoaded && selectedConversation.messages.length === 0 && <p className="message-thread-loading">No messages yet.</p>}
             {selectedConversation.messages.map((message) => (
               <div className={`message-row message-${message.from}`} key={message.id}>
                 {message.from === 'customer' && <Avatar initials={selectedConversation.initials} color={selectedConversation.color} small />}
@@ -1967,7 +1979,7 @@ function Inbox({
                   {message.text && <div className="message-bubble">{message.text}</div>}
                   {message.attachments.map((attachment, imageIndex) => (
                     <div className="thread-image" key={`${message.id}-${imageIndex}`}>
-                      <img src={attachment.url} alt={attachment.alt} />
+                      <img src={attachment.url} alt={attachment.alt} loading="lazy" />
                       {message.from === 'customer' && (
                         <button
                           type="button"
@@ -2217,16 +2229,19 @@ function Approvals({ approvals, decide }: { approvals: Approval[]; decide: (id: 
             const customer = approval.impact.customer_name
             const amount = approval.impact.amount_minor
             const currency = approval.impact.currency
+            const customerHandoff = approval.action_type === 'customer_checkout_handoff'
             return <ApprovalCard
               key={approval.id}
-              title={approval.action_type.replaceAll('_', ' ')}
+              title={customerHandoff ? 'Customer checkout help' : approval.action_type.replaceAll('_', ' ')}
               subtitle={typeof details === 'string' ? details : 'The Business Agent is waiting for an authorized team member to review this action.'}
               customer={typeof customer === 'string' ? customer : 'Business Agent'}
               initials={nameInitials(typeof customer === 'string' ? customer : 'Business Agent')}
-              amount={typeof amount === 'number' && typeof currency === 'string' ? formatCurrency(amount / 100, currency) : `Request ${approval.id}`}
+              amount={typeof amount === 'number' && typeof currency === 'string' ? formatCurrency(amount / 100, currency) : customerHandoff ? 'Checkout follow-up' : `Request ${approval.id}`}
               time={`Requested ${displayTime(approval.created_at)}`}
               onApprove={() => void decide(approval.id, 'approved')}
               onReject={() => void decide(approval.id, 'rejected')}
+              approveLabel={customerHandoff ? 'Take request' : 'Approve'}
+              rejectLabel={customerHandoff ? 'Dismiss' : 'Decline'}
             />
           })}
         </div>
@@ -2236,14 +2251,14 @@ function Approvals({ approvals, decide }: { approvals: Approval[]; decide: (id: 
   )
 }
 
-function ApprovalCard({ title, subtitle, customer, initials, amount, time, onApprove, onReject }: { title: string; subtitle: string; customer: string; initials: string; amount: string; time: string; onApprove: () => void; onReject: () => void }) {
+function ApprovalCard({ title, subtitle, customer, initials, amount, time, onApprove, onReject, approveLabel = 'Approve', rejectLabel = 'Decline' }: { title: string; subtitle: string; customer: string; initials: string; amount: string; time: string; onApprove: () => void; onReject: () => void; approveLabel?: string; rejectLabel?: string }) {
   return (
     <article className="panel approval-card">
       <div className="approval-card-top"><span className="approval-action-icon"><Clock size={18} /></span><span className="approval-request-time">{time}</span></div>
       <h2>{title}</h2>
       <p>{subtitle}</p>
       <div className="approval-requester"><Avatar initials={initials} color={colorForInitials(initials)} /><span><strong>{customer}</strong><small>{amount}</small></span></div>
-      <div className="approval-actions"><Button variant="soft" color="gray" onClick={onReject}>Decline</Button><Button onClick={onApprove}><Check size={16} /> Approve</Button></div>
+      <div className="approval-actions"><Button variant="soft" color="gray" onClick={onReject}>{rejectLabel}</Button><Button onClick={onApprove}><Check size={16} /> {approveLabel}</Button></div>
     </article>
   )
 }
@@ -2494,6 +2509,9 @@ Authorization: Bearer <session_token>
 WebSocket: ${publicApiBaseUrl.replace(/^http/, 'ws')}/public/widgets/ws
 Subprotocol: reactant-widget.<session_token>`}</code></pre>
                   </details>
+                  <a className="integration-developer-link" href={import.meta.env.VITE_APIMATIC_PORTAL_URL?.trim() || import.meta.env.VITE_OPENAPI_SPEC_URL?.trim() || `${publicApiBaseUrl}/openapi.json`} target="_blank" rel="noreferrer">
+                    Developer docs <ArrowUpRight size={14} />
+                  </a>
                 </div>
               )}
               {provider.key === 'website_chat' && websiteConnections.length > 0 && (
@@ -2677,7 +2695,6 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
 }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
   async function saveAgent() {
     if (!config || !etag) {
@@ -2704,7 +2721,6 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
       })
       setConfig(data)
       setEtag(headers.get('ETag'))
-      setHasUnsavedChanges(false)
       notify('Business Agent settings saved.')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Agent settings could not be saved.')
@@ -2714,7 +2730,6 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
   }
 
   const updateConfig = (update: Partial<AgentConfig>) => {
-    setHasUnsavedChanges(true)
     setConfig((current) => current ? { ...current, ...update } : current)
   }
   const permissionRows: { key: keyof AgentConfig['permissions']; title: string; description: string; blocked?: boolean }[] = [
@@ -2734,7 +2749,6 @@ function AgentSettings({ businessId, config, etag, setConfig, setEtag, notify, p
         <div className="agent-settings-column">
           <section className="panel agent-control-panel">
             <div className="agent-control-heading"><div className="agent-avatar"><Robot size={23} weight="duotone" /></div><div><h2>Customer support agent</h2><p>Shared across your connected channels</p></div><div className="agent-toggle"><span>{config.enabled ? 'Active' : 'Paused'}</span><Switch checked={config.enabled} onCheckedChange={(enabled) => updateConfig({ enabled })} aria-label="Enable business agent" /></div></div>
-            <div className={`agent-state-note ${config.enabled ? '' : 'agent-paused-note'}`}><span className={`agent-indicator ${config.enabled ? 'is-on' : 'is-off'}`} /><span>Agent status: {config.enabled ? 'active' : 'disabled'}. {hasUnsavedChanges ? 'Changes take effect after saving.' : 'Settings saved.'}</span></div>
           </section>
           <section className="panel settings-section">
             <div className="settings-section-heading"><h2>Business profile</h2><p>Give the agent accurate context to represent your business.</p></div>
@@ -2820,6 +2834,7 @@ type OwnerTelegramPairing = {
 
 function OwnerTelegramChannel({ businessId }: { businessId: string }) {
   const [status, setStatus] = useState<OwnerTelegramStatus | null>(null)
+  const [selectedPairChannel, setSelectedPairChannel] = useState('')
   const [statusLoading, setStatusLoading] = useState(true)
   const [pairing, setPairing] = useState<OwnerTelegramPairing | null>(null)
   const [busy, setBusy] = useState(false)
@@ -2917,11 +2932,11 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
       <div className="owner-telegram-copy">
         <span className="owner-telegram-icon"><TelegramLogo size={18} /></span>
         <div>
-          <strong>Private Telegram channel</strong>
+          <strong>Private agent channel</strong>
           <p>
             {status?.paired
-              ? 'Your verified Telegram account can message the agent and review approvals.'
-              : 'Pair your own Telegram account to receive private agent messages and approve requests.'}
+              ? 'Your verified channel can message the agent and review approvals.'
+              : 'Choose where you want to receive private agent messages and approval requests.'}
           </p>
         </div>
       </div>
@@ -2958,9 +2973,16 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
           </Dialog.Root>
         </div>
       ) : (
-        <Button onClick={() => void createPairing()} disabled={busy}>
-          {busy ? 'Preparing...' : pairing ? 'Create a new code' : 'Pair Telegram'}
-        </Button>
+        <div className="owner-telegram-pair-channel">
+          <label htmlFor="owner-pair-channel">Pair a channel</label>
+          <select id="owner-pair-channel" value={selectedPairChannel} onChange={(event) => setSelectedPairChannel(event.target.value)} disabled={busy}>
+            <option value="">Choose a channel</option>
+            <option value="telegram">Telegram</option>
+          </select>
+          <Button onClick={() => void createPairing()} disabled={busy || selectedPairChannel !== 'telegram'}>
+            {busy ? 'Preparing...' : pairing ? 'Create a new code' : 'Continue'}
+          </Button>
+        </div>
       )}
       {pairing && !status?.paired && (
         <div className="owner-telegram-pairing">
@@ -2987,20 +3009,29 @@ function OwnerTelegramChannel({ businessId }: { businessId: string }) {
 
 function OwnerAssistant({ businessId, canPairTelegram, decideApproval, approvals }: { businessId: string; canPairTelegram: boolean; decideApproval: (id: string, decision: 'approved' | 'rejected') => Promise<void>; approvals: Approval[] }) {
   const [messages, setMessages] = useState<OwnerMessage[] | null>(null)
+  const messageLoadRef = useRef<{ businessId: string; promise: Promise<void> } | null>(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [runtimeStatus, setRuntimeStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading')
   const [pendingRuns, setPendingRuns] = useState<string[]>([])
 
-  const loadMessages = useCallback(async () => {
-    try {
-      const thread = await apiRequest<{ thread: { id: string }; messages: OwnerMessage[] }>(businessPath(businessId, '/owner-assistant/thread'))
-      setError('')
-      setMessages([...thread.messages].reverse())
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The private agent thread could not be loaded.')
-    }
+  const loadMessages = useCallback(() => {
+    const inFlight = messageLoadRef.current
+    if (inFlight?.businessId === businessId) return inFlight.promise
+    const request = apiRequest<{ thread: { id: string }; messages: OwnerMessage[] }>(businessPath(businessId, '/owner-assistant/thread'))
+      .then((thread) => {
+        setError('')
+        setMessages([...thread.messages].reverse())
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : 'The private agent thread could not be loaded.')
+      })
+    const trackedRequest = request.finally(() => {
+      if (messageLoadRef.current?.promise === trackedRequest) messageLoadRef.current = null
+    })
+    messageLoadRef.current = { businessId, promise: trackedRequest }
+    return trackedRequest
   }, [businessId])
 
   useEffect(() => { void loadMessages() }, [loadMessages])
@@ -3208,8 +3239,6 @@ function OwnerCenter({
   const [businessName, setBusinessName] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
-  const apimaticPortalUrl = import.meta.env.VITE_APIMATIC_PORTAL_URL?.trim()
-  const openApiSpecUrl = import.meta.env.VITE_OPENAPI_SPEC_URL?.trim() || `${publicApiBaseUrl}/openapi.json`
 
   async function submitBusiness(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -3231,7 +3260,7 @@ function OwnerCenter({
     <div className="page-body owner-center-page">
       <PageHeading
         title="Owner center"
-        description="Manage your account, switch between businesses, and find developer resources."
+        description="Manage your account, switch between businesses, and sign out."
       />
       <section className="owner-center-profile panel">
         <span className="owner-center-avatar">{nameInitials(userName)}</span>
@@ -3285,33 +3314,6 @@ function OwnerCenter({
           </form>
         </section>
 
-        <section className="panel owner-center-developer">
-          <div className="owner-center-section-heading">
-            <span className="owner-center-section-icon"><Code size={18} /></span>
-            <span><h2>Developer</h2><p>API reference, authentication, and client SDKs.</p></span>
-          </div>
-          <div className="owner-center-api-details">
-            <span>API base URL</span>
-            <code>{publicApiBaseUrl}</code>
-          </div>
-          <div className="owner-center-doc-links">
-            <a href={openApiSpecUrl} target="_blank" rel="noreferrer">
-              <span><strong>OpenAPI definition</strong><small>View or import the API schema</small></span>
-              <ArrowUpRight size={16} />
-            </a>
-            {apimaticPortalUrl
-              ? <a href={apimaticPortalUrl} target="_blank" rel="noreferrer">
-                  <span><strong>APIMatic developer portal</strong><small>Documentation and generated SDKs</small></span>
-                  <ArrowUpRight size={16} />
-                </a>
-              : <p className="owner-center-config-note">Set <code>VITE_APIMATIC_PORTAL_URL</code> in the frontend environment to link your APIMatic portal. The OpenAPI definition can be imported into APIMatic to publish docs and generate SDKs.</p>}
-          </div>
-          <div className="owner-center-auth-note">
-            <strong>Authentication</strong>
-            <p>Send the signed-in user’s Supabase access token as a bearer token. Business data remains scoped to the selected workspace.</p>
-            <pre><code>{`Authorization: Bearer <supabase_access_token>`}</code></pre>
-          </div>
-        </section>
       </div>
     </div>
   )

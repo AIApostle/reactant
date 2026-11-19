@@ -293,6 +293,21 @@
   font-size: 9px;
 }
 
+.team-role-select {
+  max-width: 104px;
+  min-height: 29px;
+  padding: 0 24px 0 8px;
+  border: 1px solid #dfe5df;
+  border-radius: 7px;
+  color: #526057;
+  background: #fff;
+  font-size: 9px;
+}
+
+.team-role-select:disabled {
+  opacity: 0.6;
+}
+
 .team-remove {
   display: grid;
   width: 28px;

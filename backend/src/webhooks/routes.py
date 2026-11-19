@@ -31,6 +31,7 @@ from src.agent.runtime import (
     include_secure_checkout_link,
     find_business_products,
     invoke_business_agent,
+    record_customer_checkout_handoff,
     product_image_attachments,
     product_image_query,
     product_image_reply,
@@ -756,6 +757,7 @@ def _process_telegram_update(
     )
     created_checkout_urls: list[str] = []
     checkout_errors: list[str] = []
+    handoff_requests: list[dict[str, Any]] = []
     selected_product_images: list[dict[str, Any]] = []
     agent = build_business_agent(
         client=client,
@@ -771,6 +773,7 @@ def _process_telegram_update(
         idempotency_key=f"telegram:{channel_id}:{update_id}",
         created_checkout_urls=created_checkout_urls,
         checkout_errors=checkout_errors,
+        handoff_requests=handoff_requests,
         selected_product_images=selected_product_images,
         vision_enabled=bool(customer_images),
     )
@@ -809,16 +812,36 @@ def _process_telegram_update(
                 "was created. Please try again shortly or contact the store team."
             )
     if not created_checkout_urls and checkout_errors:
-        if checkout_errors[-1] == "paypal_merchant_ineligible":
-            response_text = (
-                "I couldn't prepare checkout because the business's PayPal receiving "
-                "country is not enabled for this environment. Please contact the store team."
+        try:
+            handoff = record_customer_checkout_handoff(
+                client,
+                business_id=str(business_id),
+                conversation_id=str(conversation["id"]),
+                customer_name=customer_name,
+                idempotency_key=f"telegram:{channel_id}:{update_id}",
+                summary=(
+                    f"Customer requested checkout, but it could not be prepared. "
+                    f"Reason: {checkout_errors[-1]}. Customer message: {text[:1200]}"
+                ),
             )
-        else:
-            response_text = (
-                "I couldn't prepare a secure checkout right now. No order or payment "
-                "was created. Please try again later or contact the store team."
+            handoff_requests.append(handoff)
+        except Exception as error:
+            logger.error(
+                "Customer checkout handoff could not be recorded business_id=%s conversation_id=%s exception_type=%s",
+                business_id,
+                conversation["id"],
+                type(error).__name__,
             )
+    if handoff_requests and handoff_requests[-1].get("status") == "pending":
+        response_text = (
+            "I couldn't prepare checkout automatically, so I've sent your purchase "
+            "request to the store team for follow-up."
+        )
+    elif not created_checkout_urls and checkout_errors:
+        response_text = (
+            "I couldn't prepare checkout or send your request to the store team just now. "
+            "Please contact the store directly for help with your purchase."
+        )
     image_requested = _wants_product_images(text)
     image_products = selected_product_images
     if image_requested:
