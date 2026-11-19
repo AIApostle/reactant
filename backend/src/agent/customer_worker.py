@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -8,8 +9,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from supabase import Client
 
-from src.agent.config import get_agent_runtime_settings
-from src.agent.customer_images import load_customer_images
+from src.agent.config import agent_is_enabled, get_agent_runtime_settings
+from src.agent.customer_images import history_with_customer_images, load_customer_images
+from src.agent.runtime import build_business_agent, invoke_business_agent
 from src.supabase.client import (
     get_service_supabase_client,
     get_supabase_settings,
@@ -128,11 +130,185 @@ def _process_website_message(client: Client, run: dict[str, Any]) -> None:
     )
 
 
+def _process_agentcard_payment(client: Client, run: dict[str, Any]) -> None:
+    transaction = execute(
+        client.table("agentcard_transactions")
+        .select(
+            "id,business_id,conversation_id,customer_name,customer_reference,"
+            "public_transaction_id,total_amount_minor,currency"
+        )
+        .eq("business_id", run["business_id"])
+        .eq("id", run["agentcard_transaction_id"])
+        .single()
+    )
+    conversation = execute(
+        client.table("conversations")
+        .select("channel,customer_context")
+        .eq("business_id", run["business_id"])
+        .eq("id", transaction["conversation_id"])
+        .single()
+    )
+    message_key = f"agentcard-payment-thanks:{transaction['id']}"
+    existing = execute(
+        client.table("customer_messages")
+        .select("id")
+        .eq("business_id", run["business_id"])
+        .eq("idempotency_key", message_key)
+        .maybe_single()
+    )
+    if existing:
+        return
+
+    business = execute(
+        client.table("businesses")
+        .select("name,country,currency,return_policy,delivery_policy")
+        .eq("id", run["business_id"])
+        .single()
+    )
+    agent_config = execute(
+        client.table("agent_configs")
+        .select("enabled,business_context,tone,handoff_rule,permissions,approval_policy")
+        .eq("business_id", run["business_id"])
+        .maybe_single()
+    )
+    if not agent_is_enabled(agent_config):
+        logger.info(
+            "Verified payment thank-you skipped because the customer agent is disabled transaction_id=%s",
+            transaction["id"],
+        )
+        return
+    settings = get_agent_runtime_settings()
+    history_rows = execute(
+        client.table("customer_messages")
+        .select("id,sender_type,text,attachments")
+        .eq("business_id", run["business_id"])
+        .eq("conversation_id", transaction["conversation_id"])
+        .order("created_at", desc=True)
+        .limit(8)
+    )
+    context = conversation.get("customer_context")
+    context = context if isinstance(context, dict) else {}
+    customer_reference = transaction.get("customer_reference") or context.get("customer_reference")
+    checkout_urls: list[str] = []
+    checkout_errors: list[str] = []
+    response_text = f"Thank you for your purchase, {transaction['customer_name']}! We hope to see you again soon."
+    if settings.strands_agent_enabled and settings.has_model_api_key:
+        disabled_checkout_config = dict(agent_config or {})
+        permissions = dict(disabled_checkout_config.get("permissions") or {})
+        permissions.update(
+            {"create_carts_and_orders": False, "create_paypal_checkout": False}
+        )
+        disabled_checkout_config["permissions"] = permissions
+        try:
+            agent = build_business_agent(
+                client=client,
+                business_id=run["business_id"],
+                settings=settings,
+                business=business,
+                agent_config=disabled_checkout_config,
+                history=history_with_customer_images(
+                    client,
+                    business_id=run["business_id"],
+                    conversation_id=transaction["conversation_id"],
+                    rows=history_rows,
+                ),
+                audience="customer",
+                memory_opt_in=context.get("memory_opt_in") is True,
+                memory_customer_reference=str(customer_reference or ""),
+                conversation_id=transaction["conversation_id"],
+                customer_name=transaction["customer_name"],
+                customer_reference=str(customer_reference or ""),
+                idempotency_key=f"payment:{transaction['id']}",
+                created_checkout_urls=checkout_urls,
+                checkout_errors=checkout_errors,
+                selected_product_images=[],
+                vision_enabled=False,
+            )
+            generated_response = invoke_business_agent(
+                agent,
+                (
+                    "The customer's payment has been verified as complete. Send a brief, warm, "
+                    "personal thank-you for their purchase and say you hope to see them again. "
+                    "Do not ask them to pay again or promise a delivery time."
+                ),
+                audience="customer",
+            )
+            if generated_response.strip():
+                response_text = generated_response.strip()
+        except Exception as error:
+            logger.warning(
+                "Personalized payment thank-you fell back to the standard message transaction_id=%s exception_type=%s",
+                transaction["id"],
+                type(error).__name__,
+            )
+    if not response_text:
+        response_text = "Thank you for your purchase. We hope to see you again soon!"
+
+    if conversation["channel"] == "telegram":
+        from src.webhooks.routes import _integration_credentials, _telegram_send_message
+
+        channel = execute(
+            client.table("integrations")
+            .select("id")
+            .eq("business_id", run["business_id"])
+            .eq("provider", "telegram")
+            .eq("status", "connected")
+            .limit(1)
+            .single()
+        )
+        credentials, _ = _integration_credentials(client, UUID(channel["id"]), "telegram")
+        chat_id = str(customer_reference or "")
+        if not chat_id:
+            raise RuntimeError("Telegram customer reference is unavailable.")
+        _telegram_send_message(credentials["bot_token"], chat_id, response_text)
+    elif conversation["channel"] != "website":
+        raise RuntimeError("Payment thank-you is not supported for this channel.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    execute(
+        client.table("customer_messages").insert(
+            {
+                "business_id": run["business_id"],
+                "conversation_id": transaction["conversation_id"],
+                "sender_type": "agent",
+                "sender_id": "business-agent",
+                "text": response_text,
+                "visibility": "customer",
+                "delivery_status": "sent",
+                "attachments": [],
+                "provider_message_id": message_key,
+                "idempotency_key": message_key,
+                "created_at": now,
+            }
+        )
+    )
+    execute(
+        client.table("conversations")
+        .update({"status": "open", "last_message_at": now})
+        .eq("business_id", run["business_id"])
+        .eq("id", transaction["conversation_id"])
+    )
+    execute(
+        client.table("outbox_events").upsert(
+            {
+                "business_id": run["business_id"],
+                "event_type": "conversation.message_created",
+                "topic": "conversations",
+                "data": {"conversation_id": transaction["conversation_id"]},
+                "dedupe_key": message_key,
+            },
+            on_conflict="business_id,dedupe_key",
+        )
+    )
+
+
 def _process_customer_run(client: Client, run: dict[str, Any]) -> None:
     if run["source_type"] == "telegram_update":
         _process_telegram_run(client, run)
     elif run["source_type"] == "customer_message":
         _process_website_message(client, run)
+    elif run["source_type"] == "agentcard_payment":
+        _process_agentcard_payment(client, run)
     else:
         raise RuntimeError("The queued customer agent run has an unsupported source.")
     execute(

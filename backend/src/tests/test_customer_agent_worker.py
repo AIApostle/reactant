@@ -2,13 +2,14 @@ import asyncio
 import json
 import unittest
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from starlette.requests import Request
 
 from src.agent import customer_worker
+from src.agentcard.receipts import _telegram_receipt_caption
 from src.webhooks import routes as webhook_routes
 
 
@@ -53,6 +54,99 @@ class CustomerAgentWorkerTests(unittest.TestCase):
             customer_worker._process_customer_run(client, run)
 
         process.assert_called_once_with(client, run)
+
+    def test_customer_run_dispatches_verified_agentcard_payment(self) -> None:
+        run = {
+            "id": str(uuid4()),
+            "business_id": str(uuid4()),
+            "source_type": "agentcard_payment",
+            "agentcard_transaction_id": str(uuid4()),
+            "lease_token": str(uuid4()),
+        }
+        client = MagicMock()
+        with (
+            patch.object(customer_worker, "_process_agentcard_payment") as process,
+            patch.object(customer_worker, "execute"),
+        ):
+            customer_worker._process_customer_run(client, run)
+
+        process.assert_called_once_with(client, run)
+
+    def test_verified_payment_agent_sends_a_personal_telegram_thank_you(self) -> None:
+        business_id = str(uuid4())
+        conversation_id = str(uuid4())
+        transaction_id = str(uuid4())
+        channel_id = str(uuid4())
+        run = {
+            "business_id": business_id,
+            "agentcard_transaction_id": transaction_id,
+        }
+        client = MagicMock()
+        transaction = {
+            "id": transaction_id,
+            "business_id": business_id,
+            "conversation_id": conversation_id,
+            "customer_name": "Ayo",
+            "customer_reference": "12345",
+            "public_transaction_id": "txn_01234567890123456789",
+            "total_amount_minor": 1200,
+            "currency": "USD",
+        }
+        conversation = {"channel": "telegram", "customer_context": {}}
+        business = {"name": "Shop", "country": "US", "currency": "USD"}
+        results = [
+            transaction,
+            conversation,
+            None,
+            business,
+            {"enabled": True},
+            [],
+            {"id": channel_id},
+            None,
+            None,
+            None,
+        ]
+        settings = type(
+            "Settings",
+            (),
+            {"strands_agent_enabled": True, "has_model_api_key": True},
+        )()
+
+        with (
+            patch.object(customer_worker, "execute", side_effect=results),
+            patch.object(customer_worker, "get_agent_runtime_settings", return_value=settings),
+            patch.object(customer_worker, "agent_is_enabled", return_value=True),
+            patch.object(customer_worker, "history_with_customer_images", return_value=[]),
+            patch.object(customer_worker, "build_business_agent", return_value=object()),
+            patch.object(
+                customer_worker,
+                "invoke_business_agent",
+                return_value="Thanks so much for your order, Ayo! We hope to see you again soon.",
+            ) as invoke,
+            patch(
+                "src.webhooks.routes._integration_credentials",
+                return_value=({"bot_token": "bot-token"}, UUID(channel_id)),
+            ),
+            patch("src.webhooks.routes._telegram_send_message") as send_message,
+        ):
+            customer_worker._process_agentcard_payment(client, run)
+
+        prompt = invoke.call_args.args[1]
+        self.assertIn("payment has been verified as complete", prompt)
+        send_message.assert_called_once_with(
+            "bot-token",
+            "12345",
+            "Thanks so much for your order, Ayo! We hope to see you again soon.",
+        )
+
+    def test_receipt_caption_includes_the_customer_thank_you(self) -> None:
+        caption = _telegram_receipt_caption(
+            "RCPT-1",
+            {"total_amount_minor": 1200, "currency": "USD", "public_transaction_id": "txn_1"},
+            {"provider_capture_id": "capture-1"},
+        )
+
+        self.assertIn("Thank you for your purchase", caption)
 
     def test_telegram_queue_payload_is_decrypted_before_processing(self) -> None:
         key = Fernet.generate_key()

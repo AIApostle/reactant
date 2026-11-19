@@ -677,7 +677,7 @@ def test_integration(
         (
             "seller_connected"
             if integration.get("sync_status") == "seller_connected"
-            else "seller_onboarding_pending"
+            else "ready"
         )
         if integration["provider"] == "paypal"
         else "ready"

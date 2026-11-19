@@ -15,7 +15,7 @@ from src.supabase.client import SupabaseSettings
 
 class AgentCardPayPalSetupTests(unittest.TestCase):
     def test_paypal_webhook_ids_are_loaded_as_backend_integration_mapping(self) -> None:
-        integration_id = "9f4ba75f-1b62-486c-bb27-61f7ad5e216f"
+        integration_id = "08a25352-965c-407c-8c38-156d8370ca2d"
         webhook_id = "78D87609FU9964315"
         with patch.dict(
             os.environ,

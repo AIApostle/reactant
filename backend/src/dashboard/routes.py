@@ -84,11 +84,31 @@ def get_dashboard_summary(
     )
     recent_orders = execute(
         client.table("orders")
-        .select("id,status,payment_status,amount_minor,currency,created_at")
+        .select("id,customer_name,customer_email,status,payment_status,amount_minor,currency,created_at")
         .eq("business_id", str(business_id))
         .order("created_at", desc=True)
         .limit(5)
     )
+    if recent_orders:
+        order_ids = [row["id"] for row in recent_orders]
+        recent_order_items = execute(
+            client.table("order_items")
+            .select("order_id,product_name,quantity")
+            .eq("business_id", str(business_id))
+            .in_("order_id", order_ids)
+            .order("id")
+        )
+        items_by_order: dict[str, list[dict[str, object]]] = {
+            order_id: [] for order_id in order_ids
+        }
+        for item in recent_order_items:
+            items_by_order.setdefault(item["order_id"], []).append(
+                {"product_name": item["product_name"], "quantity": item["quantity"]}
+            )
+        recent_orders = [
+            {**order, "items": items_by_order.get(order["id"], [])}
+            for order in recent_orders
+        ]
     pending_approvals = execute(
         client.table("approvals")
         .select("id,action_type,status,expires_at,created_at")

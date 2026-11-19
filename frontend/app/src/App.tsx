@@ -220,6 +220,7 @@ type DashboardSummaryApi = {
     pending_approvals?: number
   }
   agent_status: string
+  recent_orders?: OrderApi[]
 }
 
 type ProductApi = {
@@ -462,7 +463,10 @@ function App() {
     if (page === 'overview') {
       requests.push(
         apiRequest<DashboardSummaryApi>(businessPath(business.id, '/dashboard/summary')).then((summary) => {
-          if (active) setOverviewMetrics(summary.metrics)
+          if (active) {
+            setOverviewMetrics(summary.metrics)
+            setOrders((summary.recent_orders ?? []).map(mapOrder))
+          }
         }).catch((reason: unknown) => recordFailure('Overview', reason)),
       )
     }
