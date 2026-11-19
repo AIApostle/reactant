@@ -473,6 +473,23 @@ function App() {
           }
         }).catch((reason: unknown) => recordFailure('Overview', reason)),
       )
+      requests.push(
+        apiRequest<ConversationApi[]>(businessPath(businessId, '/conversations?limit=4'), { cache: 'no-store' }).then((rows) => {
+          if (!active) return
+          setConversations((current) => {
+            const recent = rows.map(mapConversation)
+            const recentIds = new Set(recent.map((item) => item.id))
+            const cached = new Map(current.map((item) => [item.id, item]))
+            const hydratedRecent = recent.map((item) => {
+              const previous = cached.get(item.id)
+              return previous?.messagesLoaded
+                ? { ...item, messages: previous.messages, messagesLoaded: true, unread: previous.unread }
+                : item
+            })
+            return [...hydratedRecent, ...current.filter((item) => !recentIds.has(item.id))]
+          })
+        }).catch((reason: unknown) => recordFailure('Recent conversations', reason)),
+      )
     }
     if (page === 'inbox') {
       const loadConversations = () => apiRequest<ConversationApi[]>(
