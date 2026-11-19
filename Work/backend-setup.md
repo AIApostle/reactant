@@ -40,7 +40,7 @@ Additional configuration:
   app and authenticated WebSocket origin checks. Website widget origins are
   registered per business and checked by the public widget routes.
 - `PUBLIC_API_BASE_URL` — public HTTPS backend URL used for provider webhooks,
-  such as `https://reactant.onrender.com`.
+  such as `https://reactant-x0kv.onrender.com`.
 - `INVITATION_DELIVERY_URL` and `INVITATION_DELIVERY_TOKEN` — HTTPS invitation
   delivery webhook.
 - `INTERNAL_SERVICE_TOKEN` — authentication for trusted internal agent calls.

@@ -1,7 +1,7 @@
 (() => {
   const script = document.currentScript
   const businessId = script?.dataset.businessId
-  const apiBase = (script?.dataset.apiUrl || 'https://reactant.onrender.com/api/v1').replace(/\/$/, '')
+  const apiBase = (script?.dataset.apiUrl || 'https://reactant-x0kv.onrender.com/api/v1').replace(/\/$/, '')
   if (!businessId || document.querySelector(`[data-reactant-chat="${businessId}"]`)) return
 
   const style = document.createElement('style')

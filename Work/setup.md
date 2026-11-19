@@ -57,7 +57,7 @@ CREDENTIALS_ENCRYPTION_KEY=<fernet-key>
 APP_ENV=production
 ALLOWED_WEB_ORIGINS=https://getreactant.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
-PUBLIC_API_BASE_URL=https://reactant.onrender.com
+PUBLIC_API_BASE_URL=https://reactant-x0kv.onrender.com
 PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 AGENTCARD_ENABLED=false
 PAYPAL_RECEIVING_COUNTRIES=US,NG
@@ -72,13 +72,13 @@ only; the backend blocks Nigerian businesses when PayPal Live is configured.
 The Render service's public API origin is:
 
 ```text
-https://reactant.onrender.com
+https://reactant-x0kv.onrender.com
 ```
 
 ### Vercel frontend environment
 
 ```dotenv
-VITE_API_BASE_URL=https://reactant.onrender.com/api/v1
+VITE_API_BASE_URL=https://reactant-x0kv.onrender.com/api/v1
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
 ```
@@ -229,7 +229,7 @@ secrets through a tunnel. Register the exact Telegram and PayPal webhook URLs
 against that public backend.
 
 The deployed frontend is `https://getreactant.vercel.app` and the deployed
-backend is `https://reactant.onrender.com`. For local testing, the frontend
+backend is `https://reactant-x0kv.onrender.com`. For local testing, the frontend
 uses `http://localhost:5173` and the backend uses
 `http://localhost:8000`; include both frontend origins in
 `ALLOWED_WEB_ORIGINS`.

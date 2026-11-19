@@ -2,11 +2,11 @@
 
 ## Hosted backend integration
 
-Production builds always use `https://reactant.onrender.com/api/v1`. Set these
+Production builds always use `https://reactant-x0kv.onrender.com/api/v1`. Set these
 Vercel environment variables for Supabase:
 
 ```dotenv
-VITE_API_BASE_URL=https://reactant.onrender.com/api/v1
+VITE_API_BASE_URL=https://reactant-x0kv.onrender.com/api/v1
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
 ```

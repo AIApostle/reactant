@@ -1,7 +1,7 @@
 import { getSupabaseClient } from './supabase'
 import type { Session } from '@supabase/supabase-js'
 
-const deployedApiBaseUrl = 'https://reactant.onrender.com/api/v1'
+const deployedApiBaseUrl = 'https://reactant-x0kv.onrender.com/api/v1'
 const localApiBaseUrl = 'http://localhost:8000/api/v1'
 const apiBaseUrl = (
   import.meta.env.PROD

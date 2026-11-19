@@ -67,7 +67,7 @@ SUPABASE_SECRET_KEY=<server-only-secret-key>
 CREDENTIALS_ENCRYPTION_KEY=<fernet-key>
 APP_ENV=production
 ALLOWED_WEB_ORIGINS=https://getreactant.vercel.app
-PUBLIC_API_BASE_URL=https://reactant.onrender.com
+PUBLIC_API_BASE_URL=https://reactant-x0kv.onrender.com
 PUBLIC_FRONTEND_URL=https://getreactant.vercel.app
 PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
 PAYPAL_RECEIVING_COUNTRIES=US,NG
@@ -141,7 +141,7 @@ instance count to process more independent conversations concurrently.
 Configure the frontend to use the same Supabase project and deployed API:
 
 ```dotenv
-VITE_API_BASE_URL=https://reactant.onrender.com/api/v1
+VITE_API_BASE_URL=https://reactant-x0kv.onrender.com/api/v1
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<public-publishable-or-anon-key>
 ```
@@ -165,7 +165,7 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
    The seller must finish onboarding within 30 days. Until then, payment status
    can remain pending and refunds are unavailable.
 4. In the corresponding Sandbox REST app, create a webhook for
-   `https://reactant.onrender.com/webhooks/paypal/<integration-id>`. Subscribe to
+   `https://reactant-x0kv.onrender.com/webhooks/paypal/<integration-id>`. Subscribe to
    `MERCHANT.ONBOARDING.COMPLETED`, `MERCHANT.PARTNER-CONSENT.REVOKED`,
    `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`,
    `PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.DENIED`,
@@ -206,7 +206,7 @@ served at `https://getreactant.vercel.app/checkout/<token>`.
 
    ```sh
    curl --request POST \
-     --url "https://reactant.onrender.com/api/v1/businesses/<BUSINESS_ID>/agentcard/test-checkout" \
+     --url "https://reactant-x0kv.onrender.com/api/v1/businesses/<BUSINESS_ID>/agentcard/test-checkout" \
      --header "Authorization: Bearer <OWNER_ACCESS_TOKEN>" \
      --header "Content-Type: application/json" \
      --header "Idempotency-Key: sandbox-checkout-001" \
