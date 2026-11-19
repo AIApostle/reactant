@@ -331,7 +331,6 @@ function formatCurrency(amount: number, currency = 'USD') {
 const navigation: { label: string; page: Page; icon: Icon }[] = [
   { label: 'Overview', page: 'overview', icon: House },
   { label: 'Inbox', page: 'inbox', icon: ChatCircleDots },
-  { label: 'Notifications', page: 'notifications', icon: Bell },
   { label: 'Catalog', page: 'catalog', icon: Package },
   { label: 'Orders', page: 'orders', icon: ShoppingBagOpen },
   { label: 'Approvals', page: 'approvals', icon: ShieldCheck },
@@ -1175,9 +1174,9 @@ function Sidebar({ page, navigate, mobileNavOpen, close, inboxCount, approvalCou
       </button>
       <nav className="main-navigation" aria-label="Main navigation">
         <p className="nav-section-label">Workspace</p>
-        {navigation.slice(0, 6).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} count={item.page === 'inbox' ? inboxCount : item.page === 'approvals' ? approvalCount : undefined} />)}
+        {navigation.slice(0, 5).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} count={item.page === 'inbox' ? inboxCount : item.page === 'approvals' ? approvalCount : undefined} />)}
         <p className="nav-section-label manage-label">Manage</p>
-        {navigation.slice(6).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} />)}
+        {navigation.slice(5).map((item) => <NavItem key={item.page} item={item} active={page === item.page} navigate={navigate} />)}
       </nav>
       <div className="sidebar-bottom">
         <button className={`sidebar-user ${page === 'owner-center' ? 'sidebar-user-active' : ''}`} onClick={openOwnerCenter} aria-label="Open owner center">
